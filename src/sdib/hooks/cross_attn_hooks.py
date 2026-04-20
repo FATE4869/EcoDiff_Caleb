@@ -99,7 +99,6 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
         self.lambs = []
         self.lambs_module_names = []
         self.cross_attn = []
-        self.hook_counter = 0
         self.device = self.pipeline.unet.device if hasattr(self.pipeline, "unet") else self.pipeline.transformer.device
         self.dst = dst
         self.epsilon = epsilon
@@ -199,17 +198,18 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
 
         # the reason to use a function inside a function is to save the extracted cross attention
         def hook_fn(module, args, kwargs, output, name):
-            # initialize lambda with acual head dim in the first run
-            if self.lambs[self.hook_counter] is None:
-                self.lambs[self.hook_counter] = (
+            idx = self._name_to_idx[name]
+            # initialize lambda with actual head dim in the first run
+            if self.lambs[idx] is None:
+                self.lambs[idx] = (
                     torch.ones(module.heads, device=self.pipeline.device, dtype=self.dtype) * init_value
                 )
                 # Only set requires_grad to True when the head number is larger than the filter
                 if self.head_num_filter <= module.heads:
-                    self.lambs[self.hook_counter].requires_grad = True
+                    self.lambs[idx].requires_grad = True
 
                 # load attn lambda module name for logging
-                self.lambs_module_names[self.hook_counter] = name
+                self.lambs_module_names[idx] = name
 
             if self.model_name == "sd3":
                 encoder_hidden_states = kwargs.get("encoder_hidden_states", None)
@@ -217,7 +217,7 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
                     hidden_states = self.attention_processor(
                         module,
                         hidden_states=kwargs["hidden_states"],
-                        lamb=self.lambs[self.hook_counter],
+                        lamb=self.lambs[idx],
                         masking=self.masking,
                         epsilon=self.epsilon,
                         use_log=self.use_log,
@@ -229,14 +229,12 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
                         hidden_states=kwargs["hidden_states"],
                         encoder_hidden_states=kwargs["encoder_hidden_states"],
                         attention_mask=kwargs.get("attention_mask", None),
-                        lamb=self.lambs[self.hook_counter],
+                        lamb=self.lambs[idx],
                         masking=self.masking,
                         epsilon=self.epsilon,
                         use_log=self.use_log,
                         eps=self.eps,
                     )
-                self.hook_counter += 1
-                self.hook_counter %= len(self.lambs)
                 if encoder_hidden_states is None:
                     return hidden_states
                 else:
@@ -251,14 +249,12 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
                         encoder_hidden_states=encoder_hidden_states,
                         attention_mask=kwargs.get("attention_mask", None),
                         image_rotary_emb=kwargs.get("image_rotary_emb", None),
-                        lamb=self.lambs[self.hook_counter],
+                        lamb=self.lambs[idx],
                         masking=self.masking,
                         epsilon=self.epsilon,
                         use_log=self.use_log,
                         eps=self.eps,
                     )
-                    self.hook_counter += 1
-                    self.hook_counter %= len(self.lambs)
                     return hidden_states
                 else:
                     hidden_states, encoder_hidden_states = self.attention_processor(
@@ -267,14 +263,12 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
                         encoder_hidden_states=encoder_hidden_states,
                         attention_mask=kwargs.get("attention_mask", None),
                         image_rotary_emb=kwargs.get("image_rotary_emb", None),
-                        lamb=self.lambs[self.hook_counter],
+                        lamb=self.lambs[idx],
                         masking=self.masking,
                         epsilon=self.epsilon,
                         use_log=self.use_log,
                         eps=self.eps,
                     )
-                    self.hook_counter += 1
-                    self.hook_counter %= len(self.lambs)
                     return hidden_states, encoder_hidden_states
             else:
                 hidden_states, _, attention_output = self.attention_processor(
@@ -282,7 +276,7 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
                     args[0],
                     encoder_hidden_states=kwargs["encoder_hidden_states"],
                     attention_mask=kwargs["attention_mask"],
-                    lamb=self.lambs[self.hook_counter],
+                    lamb=self.lambs[idx],
                     masking=self.masking,
                     epsilon=self.epsilon,
                     return_attention=self.return_attention,
@@ -291,8 +285,6 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
                 )
                 if attention_output is not None:
                     self.cross_attn.append(attention_output)
-                self.hook_counter += 1
-                self.hook_counter %= len(self.lambs)
                 return hidden_states
 
         return hook_fn
@@ -300,6 +292,10 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
     def add_hooks(self, init_value=1.0):
         hook_fn = self.get_cross_attn_extraction_hook(init_value)
         self.add_hooks_to_cross_attention(hook_fn)
+        # Build name→index mapping so hook_fn can look up the correct lambda
+        # by module name instead of a shared counter (counter is incompatible
+        # with gradient checkpointing, which re-fires hooks during recomputation).
+        self._name_to_idx = {name: idx for idx, name in enumerate(self.module_heads.keys())}
         # initialize the lambda
         self.lambs = [None] * len(self.module_heads)
         # initialize the lambda module names

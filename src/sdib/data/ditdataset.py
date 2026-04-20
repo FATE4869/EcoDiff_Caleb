@@ -99,6 +99,7 @@ class DiTDataset(Dataset):
         example = {}
         example["image"] = torch.load(self.pt_path[index])
         example["prompt"] = self.prompt_id[index]
+        example["idx"] = index
         return example
 
 

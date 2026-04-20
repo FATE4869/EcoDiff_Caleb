@@ -49,10 +49,19 @@ class PromptImageDataset(Dataset):
 
         # always overwrite the save_dir, need to find a way to avoid this
         ptpaths, imgpaths, idxlist = [], [], []
+        all_exist = True
         for i in range(self.size):
-            ptpaths.append(os.path.join(self.save_dir, f"{i}.pt"))
-            imgpaths.append(os.path.join(self.save_dir, f"{i}.png"))
+            ptpath =os.path.join(self.save_dir, f"{i}.pt")
+            ptpaths.append(ptpath)
+            imgpath = os.path.join(self.save_dir, f"{i}.png")
+            imgpaths.append(imgpath)
             idxlist.append(i)
+            if not os.path.exists(ptpath) or not os.path.exists(imgpath):
+                all_exist = False
+        if all_exist:
+            print(f"All latent tensors and images already exist in {self.save_dir}, skipping generation ...")
+            return
+
 
         # save latent tensor
         print("Generating latent tensors and images ...")
@@ -80,7 +89,10 @@ class PromptImageDataset(Dataset):
                             # update latents in output class
                             preparation_phase_output.latents = latents
                             intermediate_latents.append(latents)
-                        # use the last latents for generating images
+
+                        # use the last latents for generating images 
+                        # tensor and pil images should be the same, just different output type
+                        # spicifically, the pil output goes through the post-processing step, which may cause some difference with the tensor output, but it should be minor
                         prompt_embeds = preparation_phase_output.prompt_embeds
                         g_cpu = torch.Generator(self.device).manual_seed(self.seed)
                         image_tensor = self.pipe.inference_with_grad_aft_denoising(
@@ -124,6 +136,7 @@ class PromptImageDataset(Dataset):
         example = {}
         example["image"] = torch.load(os.path.join(self.save_dir, f"{idx}.pt"), weights_only=False)
         example["prompt"] = self.df[idx]
+        example["idx"] = idx
         return example
 
 

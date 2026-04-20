@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python scripts/train_ntk.py --save_dir results_ntk --cfg configs/flux.yaml --ntk_proj_dim 1 --jacobian_dir datasets/flux/jacobians/

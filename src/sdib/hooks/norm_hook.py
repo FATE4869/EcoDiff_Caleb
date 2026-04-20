@@ -44,7 +44,6 @@ class NormHooker:
         self.use_log = use_log
         self.lambs = []
         self.lambs_module_names = []  # store the module names for each lambda block
-        self.hook_counter = 0
         self.module_neurons = OrderedDict()
         self.binary = binary
         self.legacy_mode = legacy_mode
@@ -87,6 +86,10 @@ class NormHooker:
     def add_hooks(self, init_value=1.0):
         hook_fn = self.get_norm_masking_hook(init_value)
         self.add_hooks_to_norm(hook_fn)
+        # Build name→index mapping so hook_fn can look up the correct lambda
+        # by module name instead of a shared counter (counter is incompatible
+        # with gradient checkpointing, which re-fires hooks during recomputation).
+        self._name_to_idx = {name: idx for idx, name in enumerate(self.module_neurons.keys())}
         # initialize the lambda
         self.lambs = [None] * len(self.hook_dict)
         # initialize the lambda module names
@@ -206,26 +209,25 @@ class NormHooker:
         """
 
         def hook_fn(module, args, kwargs, output, name):
-            # initialize lambda with acual head dim in the first run
-            if self.lambs[self.hook_counter] is None:
-                self.lambs[self.hook_counter] = (
+            idx = self._name_to_idx[name]
+            # initialize lambda with actual head dim in the first run
+            if self.lambs[idx] is None:
+                self.lambs[idx] = (
                     torch.ones(self.module_neurons[name], device=self.pipeline.device, dtype=self.dtype) * init_value
                 )
-                self.lambs[self.hook_counter].requires_grad = True
+                self.lambs[idx].requires_grad = True
                 # load norm lambda module name for logging
-                self.lambs_module_names[self.hook_counter] = name
+                self.lambs_module_names[idx] = name
 
             # perform masking
             output = self.masking_fn(
                 output,
                 masking=self.masking,
-                lamb=self.lambs[self.hook_counter],
+                lamb=self.lambs[idx],
                 epsilon=self.epsilon,
                 eps=self.eps,
                 use_log=self.use_log,
             )
-            self.hook_counter += 1
-            self.hook_counter %= len(self.lambs)
             return output
 
         return hook_fn

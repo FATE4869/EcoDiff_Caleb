@@ -118,7 +118,8 @@ def semantic_eval(args):
 
     if args.task == "clip" or args.task == "all":
         # define model and classifier
-        clip_model = get_clip_encoders(backbone=args.clip_backbone, pretrained=args.clip_pretrained)["clip_model"].to(
+        clip_cache_dir = "/gpfs/projects/shlneuroai/caleb/clip_cache"
+        clip_model = get_clip_encoders(backbone=args.clip_backbone, pretrained=args.clip_pretrained, cache_dir=clip_cache_dir)["clip_model"].to(
             device
         )
         classifier = get_classifier(args.clip_backbone, args.clip_pretrained, device)
