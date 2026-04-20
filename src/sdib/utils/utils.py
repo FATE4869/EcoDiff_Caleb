@@ -189,8 +189,10 @@ def linear_layer_pruning(module, lamb, model_type):
     # update parameters in the attention module
     module.inner_dim = module.inner_dim // module.heads * new_heads
     module.query_dim = module.query_dim // module.heads * new_heads
-    module.inner_kv_dim = module.inner_kv_dim // module.heads * new_heads
-    module.cross_attention_dim = module.cross_attention_dim // module.heads * new_heads
+    if hasattr(module, "inner_kv_dim"):
+        module.inner_kv_dim = module.inner_kv_dim // module.heads * new_heads
+    if hasattr(module, "cross_attention_dim"):
+        module.cross_attention_dim = module.cross_attention_dim // module.heads * new_heads
     module.heads = new_heads
     return module
 
@@ -420,8 +422,8 @@ def hard_concrete_distribution(
         p = torch.clamp(p, min=eps)
         p = torch.log(p)
     s = torch.sigmoid((torch.log(u + eps) - torch.log(1 - u + eps) + p) / beta)
-    s = s * (eta - gamma) + gamma
-    s = s.clamp(0, 1)
+    s = s * (eta - gamma) + gamma # scale to [gamma, eta]
+    s = s.clamp(0, 1) # hard concrete distribution
     return s
 
 

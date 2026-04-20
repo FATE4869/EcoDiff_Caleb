@@ -6,13 +6,14 @@ def get_clip_encoders(
     backbone: str = "ViT-B-16",
     pretrained: str = "laion400m_e32",
     only_model: bool = False,
+    cache_dir: str = None,
 ):
     """
     extracted the pretrained clip model, tokenizer and hyperparameters setting
     """
     model: CLIP
     try:
-        model, transform, preprocess = open_clip.create_model_and_transforms(backbone, pretrained=pretrained)
+        model, transform, preprocess = open_clip.create_model_and_transforms(backbone, pretrained=pretrained, cache_dir=cache_dir)
     except Exception as e:
         print(f"Error {e}, select the correct pretrained model")
 

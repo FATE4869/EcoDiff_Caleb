@@ -266,13 +266,18 @@ def main(args):
         # add norm_hooker
 
     # optimizer and scheduler
+    # Each dict is a PyTorch per-parameter group: "params" are the tensors being optimized
+    # (the learnable soft masks / lambdas), and "lr" overrides the global learning rate
+    # for that group. This allows attention and FFN masks to be updated at different speeds.
     params = [
-        {"params": cross_attn_hooker.lambs, "lr": cfg.trainer.attn_lr},
-        {"params": ff_hooker.lambs, "lr": cfg.trainer.ff_lr},
+        {"params": cross_attn_hooker.lambs, "lr": cfg.trainer.attn_lr}, # attention head masks
+        {"params": ff_hooker.lambs, "lr": cfg.trainer.ff_lr}, # ffn masks
     ]
     if cfg.trainer.n_lr != 0:
-        params += ({"params": norm_hooker.lambs, "lr": cfg.trainer.n_lr},)
-
+        params += ({"params": norm_hooker.lambs, "lr": cfg.trainer.n_lr},) # norm masks
+    
+    # cfg.trainer.lr is a fallback for param groups without an explicit lr; redundant here
+    # since all groups above specify their own lr.
     optimizer = torch.optim.AdamW(params, lr=cfg.trainer.lr)  # redundant lr param
     lr_scheduler = get_scheduler(
         cfg.lr_scheduler.type,
@@ -363,19 +368,44 @@ def main(args):
                                 trainable_lambs = cross_attn_hooker.lambs + ff_hooker.lambs
                             else:
                                 trainable_lambs = cross_attn_hooker.lambs + ff_hooker.lambs + norm_hooker.lambs
+                            # Compute dL/dλ for each mask parameter at this timestep via the
+                            # vector-Jacobian product: dL/dλ = dL/dz_{t-1} · dz_{t-1}/dλ
+                            #
+                            # Because latents (z_{t-1}) is a multi-dimensional tensor, PyTorch
+                            # cannot compute its gradient without knowing how to reduce it to a
+                            # scalar. Passing grad_outputs=grad (i.e. dL/dz_{t-1}) provides that
+                            # weighting, contracting the Jacobian into a per-λ scalar gradient
+                            # without ever materializing the full Jacobian matrix.
+                            # Omitting grad_outputs would raise:
+                            #   "grad can be implicitly created only for scalar outputs"
+                            #
+                            # - latents: output of this denoising step (the "function" to differentiate)
+                            # - trainable_lambs: the mask parameters we want gradients for
+                            # - grad_outputs=grad: upstream gradient dL/dz_{t-1} from the chain rule
+                            # - retain_graph=True: keep the graph alive so we can also compute
+                            #   dL/d_current_latents (below) from the same forward pass                            
                             lamb_grads = torch.autograd.grad(
                                 latents,
                                 trainable_lambs,
                                 grad_outputs=grad,
                                 retain_graph=True,
                             )
-
+                            # Manually accumulate dL/d_lambda across all timesteps.
+                            # Since we re-run each denoising step independently (no single
+                            # backward() call across the full chain), we sum the lambda
+                            # gradients from each timestep ourselves.
                             for lamb, lamb_grad in zip(trainable_lambs, lamb_grads):
                                 if lamb.grad is None:
                                     lamb.grad = lamb_grad
                                 else:
                                     lamb.grad += lamb_grad
-                            # calculate grad w.r.t. unet input
+                            # Compute dL/dz_t = dL/dz_{t-1} * dz_{t-1}/dz_t — the "backwards"
+                            # gradient w.r.t. the input latent of this step. Unlike lamb_grads
+                            # (which is the "sideways" gradient used to update λ), this is not
+                            # used for any parameter update. Instead it is passed as grad_outputs
+                            # into the next loop iteration so the chain rule can continue
+                            # propagating the loss signal to earlier timesteps, analogous to
+                            # BPTT in RNNs.
                             grad = torch.autograd.grad(latents, current_latents, grad_outputs=grad)
                 else:
                     # reset seed at each step to make sure the generated image is identical under same randomness
