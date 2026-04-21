@@ -46,7 +46,7 @@ def semantic_eval(args):
     distributed_state = PartialState()
     device = distributed_state.device
 
-    dataset_dir = "/gpfs/projects/shlneuroai/caleb/dataset/"
+    dataset_dir = "/mmfs1/gscratch/shlneuroai/zheng94/dataset/"
     eval_ds = EvalDataset(data_dir=dataset_dir, dataset_name=args.dataset_name, max_size=args.max_size)
 
     if distributed_state.is_main_process:
@@ -59,7 +59,9 @@ def semantic_eval(args):
     os.makedirs(real_dir, exist_ok=True)
     os.makedirs(gen_dir, exist_ok=True)
 
-    pipe = load_model(args, torch_dtype, device)
+    # Stagger model loading to avoid CPU RAM OOM when multiple processes load simultaneously
+    with distributed_state.main_process_first():
+        pipe = load_model(args, torch_dtype, device)
     generator = torch.Generator(device=device).manual_seed(args.seed)
 
     all_indices = list(range(len(eval_ds)))
