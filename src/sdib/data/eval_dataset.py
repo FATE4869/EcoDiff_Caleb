@@ -134,23 +134,23 @@ class EvalDataset:
             raise ValueError("dataset not supported")
         return data
 
-def show_sample(sample):
+def show_sample(sample, save_path="sample.png"):
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     ax.imshow(sample["image"])
     ax.set_title(sample["text"], wrap=True, fontsize=9)
     ax.axis("off")
     plt.tight_layout()
-    plt.savefig(f"sample.png", dpi=150)
+    plt.savefig(save_path, dpi=150)
     plt.show()
-    print(f"Saved to sample.png")
+    print(f"Saved to {save_path}")
 
 
 if __name__ == "__main__":
-    dataset_dir = "/gpfs/projects/shlneuroai/caleb/dataset/"
+    dataset_dir = "/mmfs1/gscratch/shlneuroai/zheng94/dataset"
     dataset = EvalDataset(data_dir=dataset_dir, dataset_name="coco", max_size=100)
     print(f"Dataset size: {len(dataset)}")
     sample = dataset[0]
-    show_sample(sample)  
+    show_sample(sample, save_path="/mmfs1/gscratch/shlneuroai/zheng94/EcoDiff_Caleb//images/coco_sample.png")
     print(f"Sample text: {sample['text']}")
     print(f"Sample image size: {sample['image'].size}")
