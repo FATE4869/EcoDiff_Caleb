@@ -1,16 +1,17 @@
 import os
-
+                                                                                                  
+os.environ["TORCH_HOME"] = "/gpfs/projects/shlneuroai/caleb/torch_cache/"
 import torch
 from open_clip import IMAGENET_CLASSNAMES, SIMPLE_IMAGENET_TEMPLATES, create_model_and_transforms, get_tokenizer
 from open_clip.zero_shot_classifier import build_zero_shot_classifier
 from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from tqdm import tqdm
-
+from diffusers.models import UNet2DConditionModel, FluxTransformer2DModel, SD3Transformer2DModel
 import argparse
 from sdib.data import ImageNetDataset
-from sdib.utils import create_pipeline, get_clip_encoders, load_pipeline
-
+from sdib.utils import create_pipeline, get_clip_encoders, load_pipeline, get_precision
+import pickle
 
 # CLIP evaluation
 def accuracy(output, target, topk=(1, 5)):
@@ -64,7 +65,6 @@ def semantic_eval(args):
         raise ValueError(f"task {args.task} not supported")
 
     # Generating the synthetic images with sdxl model
-    # TODO for sd3 model
     device = args.device
     if args.mix_precision == "bf16":
         torch_dtype = torch.bfloat16
@@ -81,13 +81,32 @@ def semantic_eval(args):
         num_inference_steps=args.num_intervention_steps,
         seed=args.seed,
     )
-    # if args.task == "gen":  # overwrite the previous images
-    #     print("Generating synthetic images with sdxl model...")
-    #     ds.prepare_data()
+    if args.task == "gen" or args.task == "fid":
+        ds.load_data()
+        if not ds.image_path:
+            print("Generating synthetic images with original model...")
+            ds.prepare_data()
+        else:
+            print("Synthetic images with original model already exist, skip generation.")
 
-    pipe = create_pipeline(
-        args.model, device, torch_dtype, save_pt=args.save_pth, lambda_threshold=args.lambda_threshold
-    )
+    # use hookers (.pth) to create the model
+    if args.save_pth is not None:
+        pipe = create_pipeline(
+            args.model, device, torch_dtype, save_pt=args.save_pth, lambda_threshold=args.lambda_threshold
+        )
+    elif args.pruned_model_pt is not None: # use the pruned model (.pkl) to create the model
+        with open(args.pruned_model_pt, "rb") as f: 
+            model = pickle.load(f)
+        model.to(get_precision(args.mix_precision))
+
+        if hasattr(pipe, "unet"): 
+            assert isinstance(model, UNet2DConditionModel), "Model must be UNet2DConditionModel"
+            pipe.unet = model
+        else:
+            assert isinstance(model, (FluxTransformer2DModel, SD3Transformer2DModel)), "Model must be either FluxTransformer2DModel or SD3Transformer2DModel"
+            pipe.transformer = model
+        
+        pipe.to(args.device)
 
     masked_ds = ImageNetDataset(
         save_dir=args.save_dir,
@@ -96,25 +115,32 @@ def semantic_eval(args):
         pipe=pipe,
         seed=args.seed,
         num_inference_steps=args.num_intervention_steps,
-        task=args.save_pth.split(os.sep)[-2],
+        task=args.save_pth.split(os.sep)[-2] if args.save_pth is not None else "",
     )
-    if args.task == "gen":
-        print("Generating synthetic images with masked sdxl model...")
-        masked_ds.prepare_data()
-
-    if args.task == "fid":
-        # if not ds.image_path:
-        ds.load_data()
-        if not ds.image_path:
-            ds.prepare_data()
-
+    if args.task == "gen" or args.task == "fid":
         masked_ds.load_data()
-        if not masked_ds.image_path:
-            print("Generating synthetic images with masked sdxl model")
+        if not masked_ds.image_path:    
+            print("Generating synthetic images with masked model...")
             masked_ds.prepare_data()
+        else:
+            print("Synthetic images with masked model already exist, skip generation.")
+
+    # if args.task == "fid":
+    #     # if not ds.image_path:
+    #     ds.load_data()
+    #     if not ds.image_path:
+    #         ds.prepare_data()
+
+    #     masked_ds.load_data()
+    #     if not masked_ds.image_path:
+    #         print("Generating synthetic images with masked model")
+    #         masked_ds.prepare_data()
 
     # save the pth folder
-    log_txt = os.path.join(os.path.dirname(args.save_pth), "semantic_eval.txt")
+    if args.save_pth is not None:
+        log_txt = os.path.join(os.path.dirname(args.save_pth), "semantic_eval.txt")
+    else:
+        log_txt = "results/semantic_eval.txt"
 
     if args.task == "clip" or args.task == "all":
         # define model and classifier
@@ -143,6 +169,8 @@ def semantic_eval(args):
         ds.is_transform = False
         masked_ds.is_transform = False
         with tqdm(total=total_length) as pbar:
+            # import pdb
+            # pdb.set_trace()
             original_list, mask_list = [], []
             for idx in range(total_length):
                 original_data, mask_data = ds[idx], masked_ds[idx]
@@ -152,10 +180,11 @@ def semantic_eval(args):
                 mask_img = mask_data[0].unsqueeze(0) * 255
                 original_list.append(original_img.to(torch.uint8))
                 mask_list.append(mask_img.to(torch.uint8))
-                if len(original_list) % 1000 == 0 and len(original_list) > 0:
-                    fid.update(torch.cat(original_list, dim=0), real=True)
-                    fid.update(torch.cat(mask_list, dim=0), real=False)
-                    original_list, mask_list = [], []
+                # 
+                # if len(original_list) % 5 == 0 and len(original_list) > 0:
+                fid.update(torch.cat(original_list, dim=0), real=True)
+                fid.update(torch.cat(mask_list, dim=0), real=False)
+                original_list, mask_list = [], []
                 pbar.update()
 
         print(f"FID score:{fid.compute()}")
@@ -182,6 +211,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="path to save the model",
+    )
+    parser.add_argument(
+        "--pruned_model_pt",
+        type=str,
+        default=None,
+        help="path to the pruned model, if provided, will use the pruned model for evaluation",
     )
     parser.add_argument(
         "--clip_backbone", type=str, default="ViT-B-16", help="clip model type, available ViT-B-16, ViT-L-14"

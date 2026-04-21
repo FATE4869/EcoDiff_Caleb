@@ -76,8 +76,8 @@ def load_pipeline(model_str: str, torch_dtype: torch.dtype, disable_progress_bar
         pipe = DiTIBPipeline.from_pretrained("facebook/DiT-XL-2-256", torch_dtype=torch_dtype)
         pipe.scheduler = ReverseDPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
     elif model_str == "flux":
-        cache_dir = "/mmfs1/gscratch/shlneuroai/zheng94/hf_cache/hub/"
-        pipe = FluxIBPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", torch_dtype=torch_dtype, cache_dir=cache_dir, local_files_only=True, device_map='cuda')
+        cache_dir = "/gpfs/projects/shlneuroai/caleb/hf_cache/hub/"
+        pipe = FluxIBPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", torch_dtype=torch_dtype, cache_dir=cache_dir)
     elif model_str == "flux_dev":
         pipe = FluxIBPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", torch_dtype=torch_dtype)
     else:

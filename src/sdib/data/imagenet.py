@@ -37,6 +37,7 @@ class ImageNetDataset(Dataset):
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir)
         self.imagenet_labels = IMAGENET_LABEL
+        self.imagenet_labels = dict(list(self.imagenet_labels.items())[:10]) # only use 10 classes for evaluation
         self.device = device
         self.seed = seed
         self.pipe = pipe

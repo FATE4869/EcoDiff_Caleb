@@ -35,7 +35,7 @@ class EvalDataset:
         data_dir="./datasets",
         dataset_name="laion",
         image_size=256,
-        max_size=1000,  # max size of the dataset for saving memory
+        max_size=100,  # max size of the dataset for saving memory
         interpolation=Image.Resampling.BICUBIC,
     ):
         assert dataset_name in ["laion", "coco", "flickr"], "dataset not supported"
@@ -93,6 +93,7 @@ class EvalDataset:
             print("Number of images after filtering:", len(captions))
             self.captions = captions.iloc[: self.max_size]
         elif dataset_name == "flickr":
+            
             dataset_dir = os.path.join(data_dir, "flickr")
             captions = pd.read_csv(os.path.join(dataset_dir, "Images", "results.csv"), delimiter="|")
             captions.columns = captions.columns.str.strip()
@@ -132,3 +133,24 @@ class EvalDataset:
         else:
             raise ValueError("dataset not supported")
         return data
+
+def show_sample(sample):
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    ax.imshow(sample["image"])
+    ax.set_title(sample["text"], wrap=True, fontsize=9)
+    ax.axis("off")
+    plt.tight_layout()
+    plt.savefig(f"sample.png", dpi=150)
+    plt.show()
+    print(f"Saved to sample.png")
+
+
+if __name__ == "__main__":
+    dataset_dir = "/gpfs/projects/shlneuroai/caleb/dataset/"
+    dataset = EvalDataset(data_dir=dataset_dir, dataset_name="coco", max_size=100)
+    print(f"Dataset size: {len(dataset)}")
+    sample = dataset[0]
+    show_sample(sample)  
+    print(f"Sample text: {sample['text']}")
+    print(f"Sample image size: {sample['image'].size}")

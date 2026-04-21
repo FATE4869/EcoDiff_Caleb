@@ -16,17 +16,21 @@ from sdib.utils import (
 def main(args):
     pipe = load_pipeline(args.model, get_precision(args.precision), True)
     pipe.to(args.device)
-
+    modules_of_interest = ["attn", "ff", "conv", "norm", "overall"]
+    # show the original model summary before loading the pruned model
+    if hasattr(pipe, "unet"):
+        show_model_param_summary(pipe.unet, modules_of_interest)
+    else:
+        show_model_param_summary(pipe.transformer, modules_of_interest)
     os.makedirs(args.dst, exist_ok=True)
 
     # generate images
-    for idx, prompt in enumerate(tqdm(args.prompts, desc="Generating Original")):
-        g_cpu = torch.Generator(args.device).manual_seed(args.seed)
-        image = pipe(prompt=prompt, generator=g_cpu, num_inference_steps=args.num_intervention_steps).images[0]
-        image.save(os.path.join(args.dst, f"original_{idx}.png"))
-
-    with open(args.pruned_model_pt, "rb") as f:
-        model = pickle.load(f)
+    # for idx, prompt in enumerate(tqdm(args.prompts, desc="Generating Original")):
+    #     g_cpu = torch.Generator(args.device).manual_seed(args.seed)
+    #     image = pipe(prompt=prompt, generator=g_cpu, num_inference_steps=args.num_intervention_steps).images[0]
+    #     image.save(os.path.join(args.dst, f"original_{idx}.png"))
+    
+    with open(args.pruned_model_pt, "rb") as f: model = pickle.load(f)
     model.to(get_precision(args.precision))
 
     if hasattr(pipe, "unet"): 
@@ -39,6 +43,7 @@ def main(args):
     pipe.to(args.device)
 
     modules_of_interest = ["attn", "ff", "conv", "norm", "overall"]
+    # show the pruned model summary after loading the pruned model
     show_model_param_summary(model, modules_of_interest)
 
     # generate images

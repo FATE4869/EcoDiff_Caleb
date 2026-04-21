@@ -1,0 +1,3 @@
+python scripts/inference_pruned_model.py --model flux --num_intervention_steps 5 --dst results/flux_demo_pr20/ --pruned_model_pt ../../hf_cache/ecodiff_flux_prune/schnell/pruned_model_20.pkl 
+python scripts/evaluation/semantic_eval.py --model flux --pruned_model_pt ../../hf_cache/ecodiff_flux_prune/schnell/pruned_model_20.pkl --task fid
+accelerate launch --num_processes 2 scripts/evaluation/semantic_eval_dataset.py --save_dir results/generated_images_flux --num_intervention_steps 50 --model flux --dataset_name flickr --max_size 2000 --image_size 512 
