@@ -5,6 +5,7 @@ import torch
 import torchvision.transforms.functional as TF
 from torchmetrics.image.fid import FrechetInceptionDistance
 from diffusers.models import UNet2DConditionModel, FluxTransformer2DModel, SD3Transformer2DModel
+from open_clip import create_model_and_transforms, get_tokenizer
 from accelerate import PartialState
 from PIL import Image
 from tqdm import tqdm
@@ -59,56 +60,113 @@ def semantic_eval(args):
     os.makedirs(real_dir, exist_ok=True)
     os.makedirs(gen_dir, exist_ok=True)
 
-    pipe = load_model(args, torch_dtype, device)
-    generator = torch.Generator(device=device).manual_seed(args.seed)
+    n_expected = len(eval_ds)
+    images_exist = (
+        len(os.listdir(real_dir)) >= n_expected
+        and len(os.listdir(gen_dir)) >= n_expected
+    )
 
-    all_indices = list(range(len(eval_ds)))
-    with distributed_state.split_between_processes(all_indices) as local_indices:
-        for idx in tqdm(local_indices, disable=not distributed_state.is_local_main_process):
-            sample = eval_ds[idx]
-            caption = sample["text"]
-            real_pil = sample["image"].convert("RGB").resize((args.image_size, args.image_size))
+    if images_exist:
+        if distributed_state.is_main_process:
+            print(f"Found {n_expected} existing images in {args.save_dir}, skipping generation.")
+    else:
+        pipe = load_model(args, torch_dtype, device)
+        generator = torch.Generator(device=device).manual_seed(args.seed)
 
-            with torch.no_grad():
-                gen_pil = pipe(
-                    caption,
-                    num_inference_steps=args.num_intervention_steps,
-                    generator=generator,
-                ).images[0].resize((args.image_size, args.image_size))
+        all_indices = list(range(len(eval_ds)))
+        with distributed_state.split_between_processes(all_indices) as local_indices:
+            for idx in tqdm(local_indices, disable=not distributed_state.is_local_main_process):
+                sample = eval_ds[idx]
+                caption = sample["text"]
+                real_pil = sample["image"].convert("RGB").resize((args.image_size, args.image_size))
 
-            real_pil.save(os.path.join(real_dir, f"{idx:05d}.png"))
-            gen_pil.save(os.path.join(gen_dir, f"{idx:05d}.png"))
+                with torch.no_grad():
+                    gen_pil = pipe(
+                        caption,
+                        num_inference_steps=args.num_intervention_steps,
+                        generator=generator,
+                    ).images[0].resize((args.image_size, args.image_size))
 
-    # wait for all processes to finish generating
-    distributed_state.wait_for_everyone()
+                real_pil.save(os.path.join(real_dir, f"{idx:05d}.png"))
+                gen_pil.save(os.path.join(gen_dir, f"{idx:05d}.png"))
+
+        # wait for all processes to finish generating
+        distributed_state.wait_for_everyone()
 
     # compute FID on main process only
     if distributed_state.is_main_process:
         print("Computing FID...")
-        fid = FrechetInceptionDistance(feature=64)
-
+        fid = FrechetInceptionDistance(feature=2048)
+        original_list, gen_list = [], []
         for idx in tqdm(range(len(eval_ds))):
             real_pil = Image.open(os.path.join(real_dir, f"{idx:05d}.png")).convert("RGB")
             gen_pil = Image.open(os.path.join(gen_dir, f"{idx:05d}.png")).convert("RGB")
 
             real_t = (TF.to_tensor(real_pil).unsqueeze(0) * 255).to(torch.uint8)
             gen_t = (TF.to_tensor(gen_pil).unsqueeze(0) * 255).to(torch.uint8)
-
-            fid.update(real_t, real=True)
-            fid.update(gen_t, real=False)
-
+            original_list.append(real_t)
+            gen_list.append(gen_t)
+            if len(original_list) % 500 == 0 and len(original_list) > 0:
+                fid.update(torch.cat(original_list), real=True)
+                fid.update(torch.cat(gen_list), real=False)
+                original_list, gen_list = [], []
+        if original_list: # in case there are remaining images not divisible by 500
+            fid.update(torch.cat(original_list), real=True)
+            fid.update(torch.cat(gen_list), real=False)
         fid_score = fid.compute().item()
         print(f"FID score: {fid_score:.4f}")
 
-        if args.save_pth is not None:
-            log_txt = os.path.join(os.path.dirname(args.save_pth), "semantic_eval.txt")
-        else:
-            os.makedirs("results", exist_ok=True)
-            log_txt = "results/semantic_eval.txt"
-
+        log_txt = os.path.join(args.save_dir, "semantic_eval.txt")
         with open(log_txt, "a") as f:
-            model_label = args.pruned_model_pt or args.save_pth or "original"
+            model_label = args.pruned_model_pt or args.save_dir or "original"
             f.write(f"[{args.dataset_name}] model={model_label}  FID={fid_score:.4f}\n")
+
+
+def clip_eval(args):
+    distributed_state = PartialState()
+    device = distributed_state.device
+
+    dataset_dir = "/gpfs/projects/shlneuroai/caleb/dataset/"
+    eval_ds = EvalDataset(data_dir=dataset_dir, dataset_name=args.dataset_name, max_size=args.max_size)
+
+    gen_dir = os.path.join(args.save_dir, "generated")
+    if not os.path.exists(gen_dir) or len(os.listdir(gen_dir)) < len(eval_ds):
+        raise RuntimeError(f"Generated images not found in {gen_dir}. Run semantic_eval first.")
+
+    if distributed_state.is_main_process:
+        print("Computing CLIP score (mean cosine similarity between generated images and captions)...")
+        clip_model, _, preprocess = create_model_and_transforms(
+            model_name=args.clip_backbone, pretrained=args.clip_pretrained,
+            cache_dir="/gpfs/projects/shlneuroai/caleb/clip_cache",
+        )
+        clip_model = clip_model.to(device).eval()
+        tokenizer = get_tokenizer(args.clip_backbone)
+
+        clip_scores = []
+        with torch.no_grad():
+            for idx in tqdm(range(len(eval_ds))):
+                caption = eval_ds[idx]["text"]
+                gen_pil = Image.open(os.path.join(gen_dir, f"{idx:05d}.png")).convert("RGB")
+
+                image_input = preprocess(gen_pil).unsqueeze(0).to(device)
+                text_input = tokenizer([caption]).to(device)
+
+                image_features = clip_model.encode_image(image_input)
+                text_features = clip_model.encode_text(text_input)
+
+                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+                text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
+                cosine_sim = (image_features * text_features).sum().item()
+                clip_scores.append(cosine_sim)
+
+        clip_score = 100.0 * sum(clip_scores) / len(clip_scores)
+        print(f"CLIP score (x100): {clip_score:.4f}")
+
+        log_txt = os.path.join(args.save_dir, "semantic_eval.txt")
+        with open(log_txt, "a") as f:
+            model_label = args.pruned_model_pt or args.save_dir or "original"
+            f.write(f"[{args.dataset_name}] model={model_label}  CLIP score (x100)={clip_score:.4f}\n")
 
 
 if __name__ == "__main__":
@@ -124,6 +182,16 @@ if __name__ == "__main__":
     parser.add_argument("--save_pth", "-sp", type=str, default=None, help="path to hooker .pth for pruned model")
     parser.add_argument("--pruned_model_pt", type=str, default=None, help="path to pruned model .pkl")
     parser.add_argument("--lambda_threshold", "-lt", type=float, default=0.01)
-
+    parser.add_argument("--clip_backbone", type=str, default="ViT-B-16",help="clip model type, available ViT-B-16, ViT-L-14")
+    parser.add_argument("--clip_pretrained", type=str, default="laion400m_e32")
+    parser.add_argument("--task", type=str, default="fid", help="fid | clip | all")
     args = parser.parse_args()
-    semantic_eval(args)
+    if args.task == "fid":
+        semantic_eval(args)
+    elif args.task == "clip":
+        clip_eval(args)
+    elif args.task == "all":
+        semantic_eval(args)
+        clip_eval(args)
+    else:
+        raise ValueError(f"Unknown task: {args.task}")
