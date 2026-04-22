@@ -1,6 +1,8 @@
 import gc
 import io
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 os.environ["TORCH_HOME"] = os.getenv("TORCH_HOME")
 import torch

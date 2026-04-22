@@ -1,6 +1,8 @@
 import os
-                                                                                                  
-os.environ["TORCH_HOME"] = os.getenv("TORCH_HOME", "/mmfs1/gscratch/shlneuroai/zheng94/torch_cache")
+from dotenv import load_dotenv
+load_dotenv()
+
+os.environ["TORCH_HOME"] = os.getenv("TORCH_HOME")
 import torch
 from open_clip import IMAGENET_CLASSNAMES, SIMPLE_IMAGENET_TEMPLATES, create_model_and_transforms, get_tokenizer
 from open_clip.zero_shot_classifier import build_zero_shot_classifier

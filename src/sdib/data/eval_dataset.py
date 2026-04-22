@@ -1,6 +1,8 @@
 import glob
 import json
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 import gdown
 import pandas as pd
