@@ -16,7 +16,7 @@ trainer:
   device: "cuda:0"
   num_intervention_steps: 5
   seed: 48
-  init_lambda: 3
+  init_lambda: 5 # page 17 in the paper
   regex: ".*" # "^(down_blocks.[1,2]).*" # optional are ^(down_blocks).*, ^(up_blocks).*, .* (for all heads)
   attn_name: attn # use to filter the attention heads, e.g. attn2 only for cross attention
   head_num_filter: 1 # number of heads to filter, apply lambda to the layter that has more than head_num_filter heads
