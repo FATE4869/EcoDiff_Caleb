@@ -1,3 +1,5 @@
+import gc
+import io
 import os
 
 os.environ["TORCH_HOME"] = "/gpfs/projects/shlneuroai/caleb/torch_cache/"
@@ -25,15 +27,24 @@ def load_model(args, torch_dtype, device):
     else:
         pipe = load_pipeline(args.model, torch_dtype, disable_progress_bar=True)
         if args.pruned_model_pt is not None:
+            class CpuUnpickler(pickle.Unpickler):
+                def find_class(self, module, name):
+                    if module == "torch.storage" and name == "_load_from_bytes":
+                        return lambda b: torch.load(io.BytesIO(b), map_location="cpu", weights_only=False)
+                    return super().find_class(module, name)
+
             with open(args.pruned_model_pt, "rb") as f:
-                model = pickle.load(f)
+                model = CpuUnpickler(f).load()
             model.to(get_precision(args.mix_precision))
             if hasattr(pipe, "unet"):
                 assert isinstance(model, UNet2DConditionModel)
+                del pipe.unet
                 pipe.unet = model
             else:
                 assert isinstance(model, (FluxTransformer2DModel, SD3Transformer2DModel))
+                del pipe.transformer
                 pipe.transformer = model
+            gc.collect()
     pipe.to(device)
     return pipe
 
