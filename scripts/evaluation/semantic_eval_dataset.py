@@ -2,7 +2,7 @@ import gc
 import io
 import os
 
-os.environ["TORCH_HOME"] = "/gpfs/projects/shlneuroai/caleb/torch_cache/"
+os.environ["TORCH_HOME"] = os.getenv("TORCH_HOME")
 import torch
 import torchvision.transforms.functional as TF
 from torchmetrics.image.fid import FrechetInceptionDistance
@@ -58,7 +58,7 @@ def semantic_eval(args):
     distributed_state = PartialState()
     device = distributed_state.device
 
-    dataset_dir = "/gpfs/projects/shlneuroai/caleb/dataset/"
+    dataset_dir = os.getenv("DATASET_DIR")
     eval_ds = EvalDataset(data_dir=dataset_dir, dataset_name=args.dataset_name, max_size=args.max_size)
 
     if distributed_state.is_main_process:
@@ -76,7 +76,7 @@ def semantic_eval(args):
         len(os.listdir(real_dir)) >= n_expected
         and len(os.listdir(gen_dir)) >= n_expected
     )
-
+    import pdb; pdb.set_trace()
     if images_exist:
         if distributed_state.is_main_process:
             print(f"Found {n_expected} existing images in {args.save_dir}, skipping generation.")
@@ -137,7 +137,7 @@ def clip_eval(args):
     distributed_state = PartialState()
     device = distributed_state.device
 
-    dataset_dir = "/gpfs/projects/shlneuroai/caleb/dataset/"
+    dataset_dir = os.getenv("DATASET_DIR")
     eval_ds = EvalDataset(data_dir=dataset_dir, dataset_name=args.dataset_name, max_size=args.max_size)
 
     gen_dir = os.path.join(args.save_dir, "generated")
@@ -148,7 +148,7 @@ def clip_eval(args):
         print("Computing CLIP score (mean cosine similarity between generated images and captions)...")
         clip_model, _, preprocess = create_model_and_transforms(
             model_name=args.clip_backbone, pretrained=args.clip_pretrained,
-            cache_dir="/gpfs/projects/shlneuroai/caleb/clip_cache",
+            cache_dir=os.getenv("CLIP_CACHE_DIR"),
         )
         clip_model = clip_model.to(device).eval()
         tokenizer = get_tokenizer(args.clip_backbone)

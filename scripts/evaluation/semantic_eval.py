@@ -1,6 +1,6 @@
 import os
                                                                                                   
-os.environ["TORCH_HOME"] = "/gpfs/projects/shlneuroai/caleb/torch_cache/"
+os.environ["TORCH_HOME"] = os.getenv("TORCH_HOME", "/mmfs1/gscratch/shlneuroai/zheng94/torch_cache")
 import torch
 from open_clip import IMAGENET_CLASSNAMES, SIMPLE_IMAGENET_TEMPLATES, create_model_and_transforms, get_tokenizer
 from open_clip.zero_shot_classifier import build_zero_shot_classifier
@@ -144,7 +144,7 @@ def semantic_eval(args):
 
     if args.task == "clip" or args.task == "all":
         # define model and classifier
-        clip_cache_dir = "/gpfs/projects/shlneuroai/caleb/clip_cache"
+        clip_cache_dir = os.getenv("CLIP_CACHE_DIR")
         clip_model = get_clip_encoders(backbone=args.clip_backbone, pretrained=args.clip_pretrained, cache_dir=clip_cache_dir)["clip_model"].to(
             device
         )

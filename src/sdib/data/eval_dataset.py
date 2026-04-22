@@ -147,7 +147,7 @@ def show_sample(sample, save_path="sample.png"):
 
 
 if __name__ == "__main__":
-    dataset_dir = "/mmfs1/gscratch/shlneuroai/zheng94/dataset"
+    dataset_dir = os.getenv("DATASET_DIR")
     dataset = EvalDataset(data_dir=dataset_dir, dataset_name="coco", max_size=100)
     print(f"Dataset size: {len(dataset)}")
     sample = dataset[0]
