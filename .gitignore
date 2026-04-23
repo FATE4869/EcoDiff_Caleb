@@ -176,3 +176,5 @@ cython_debug/
 # EcoDiff ignore file
 datasets/
 results/
+slurm_logs/
+scripts/*.sh
