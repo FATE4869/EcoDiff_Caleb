@@ -54,6 +54,7 @@ def get_cfg(save_pt):
 
 def load_pipeline(model_str: str, torch_dtype: torch.dtype, disable_progress_bar: bool):
     """load a diffusion pipeline"""
+    hf_cache_dir = os.getenv("HF_CACHE_DIR")
     if model_str == "sd1":
         pipe = SDIBDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", include_entities=False)
     elif model_str == "sd2":
@@ -81,7 +82,7 @@ def load_pipeline(model_str: str, torch_dtype: torch.dtype, disable_progress_bar
         hf_cache_dir = os.getenv("HF_CACHE_DIR")
         pipe = FluxIBPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", torch_dtype=torch_dtype, cache_dir=hf_cache_dir)
     elif model_str == "flux_dev":
-        pipe = FluxIBPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", torch_dtype=torch_dtype)
+        pipe = FluxIBPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", torch_dtype=torch_dtype, cache_dir=hf_cache_dir)
     else:
         raise ValueError(f"Model {model_str} not supported")
     pipe.set_progress_bar_config(disable=disable_progress_bar)
