@@ -33,7 +33,8 @@ class PromptImageDataset(Dataset):
         if not os.path.exists(self.save_dir):
             print(f"save_dir {self.save_dir} does not exist, creating the directory")
             os.makedirs(self.save_dir)
-
+            os.makedirs(os.path.join(self.save_dir, "final_latent"), exist_ok=True)
+            os.makedirs(os.path.join(self.save_dir, "jacobians"), exist_ok=True)
         if not os.path.exists(self.metadata):
             base_dir = os.path.dirname(self.metadata)
             if not os.path.exists(base_dir):
@@ -52,6 +53,7 @@ class PromptImageDataset(Dataset):
         ptpaths, imgpaths, idxlist = [], [], []
         all_exist = True
         self.final_latent_dir = os.path.join(self.save_dir, "final_latent")
+        
         for i in range(self.size):
             ptpath =os.path.join(self.final_latent_dir, f"{i}.pt")
             ptpaths.append(ptpath)

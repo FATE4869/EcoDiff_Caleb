@@ -24,6 +24,7 @@ class FeedForwardHooker:
         use_log: bool = False,
         binary: bool = False,
         legacy_mode: bool = False,
+        verbose: bool = False,
     ):
         self.pipeline = pipeline
         self.net = pipeline.unet if hasattr(pipeline, "unet") else pipeline.transformer
@@ -41,6 +42,7 @@ class FeedForwardHooker:
         self.module_neurons = OrderedDict()
         self.binary = binary
         self.legacy_mode = legacy_mode
+        self.verbose = verbose
 
     def add_hooks_to_ff(self, hook_fn: callable):
         """
@@ -72,7 +74,8 @@ class FeedForwardHooker:
                         self.module_neurons[name] = actual_module.proj.out_features
                     else:
                         raise NotImplementedError(f"Module {name} is not implemented, please check")
-                    self.logger.info(f"Adding hook to {name}, neurons: {self.module_neurons[name]}")
+                    if self.verbose:
+                        self.logger.info(f"Adding hook to {name}, neurons: {self.module_neurons[name]}")
                     total_hooks += 1
             
             elif not self.legacy_mode and "single_transformer_blocks" in name and name_last_word.isdecimal() and hasattr(module, "proj_mlp"):
@@ -83,7 +86,8 @@ class FeedForwardHooker:
                 hook = actual_module.register_forward_hook(hook_fn_with_name, with_kwargs=True)
                 self.hook_dict[name] = hook
                 self.module_neurons[name] = module.proj_mlp.out_features
-                self.logger.info(f"Adding hook to Flux Single Block {name}, neurons: {self.module_neurons[name]}")
+                if self.verbose:
+                    self.logger.info(f"Adding hook to Flux Single Block {name}, neurons: {self.module_neurons[name]}")
                 total_hooks += 1
 
         self.logger.info(f"Total hooks added: {total_hooks}")

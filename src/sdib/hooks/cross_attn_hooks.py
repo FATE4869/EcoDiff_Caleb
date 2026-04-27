@@ -45,7 +45,8 @@ class BaseCrossAttentionHooker:
                     hook = module.register_forward_hook(hook_fn, with_kwargs=True)
                     self.hook_dict[name] = hook
                     self.module_heads[name] = module.heads
-                    self.logger.info(f"Adding hook to {name}, module.heads: {module.heads}")
+                    if self.verbose:
+                        self.logger.info(f"Adding hook to {name}, module.heads: {module.heads}")
                     total_hooks += 1
         self.logger.info(f"Total hooks added: {total_hooks}")
 
@@ -78,6 +79,7 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
         attn_name="attn",
         use_log=False,
         eps=1e-6,
+        verbose=False,
     ):
         super().__init__(
             pipeline,
@@ -102,6 +104,7 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
         self.device = self.pipeline.unet.device if hasattr(self.pipeline, "unet") else self.pipeline.transformer.device
         self.dst = dst
         self.epsilon = epsilon
+        self.verbose = verbose
         self.binary = binary
         self.return_attention = return_attention
         self.model_name = model_name

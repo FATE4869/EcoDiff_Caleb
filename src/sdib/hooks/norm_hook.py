@@ -30,6 +30,7 @@ class NormHooker:
         use_log: bool = False,
         binary: bool = False,
         legacy_mode: bool = False,
+        verbose: bool = False,
     ):
         self.pipeline = pipeline
         self.net = pipeline.unet if hasattr(pipeline, "unet") else pipeline.transformer
@@ -47,6 +48,7 @@ class NormHooker:
         self.module_neurons = OrderedDict()
         self.binary = binary
         self.legacy_mode = legacy_mode
+        self.verbose = verbose
 
     def add_hooks_to_norm(self, hook_fn: callable):
         """
@@ -78,7 +80,8 @@ class NormHooker:
                         self.module_neurons[name] = actual_module.out_features
                     else:
                         raise NotImplementedError(f"Module {name} is not implemented, please check")
-                    self.logger.info(f"Adding hook to {name}, neurons: {self.module_neurons[name]}")
+                    if self.verbose:
+                        self.logger.info(f"Adding hook to {name}, neurons: {self.module_neurons[name]}")
                     total_hooks += 1
         self.logger.info(f"Total hooks added: {total_hooks}")
         return self.hook_dict

@@ -595,7 +595,6 @@ def main(args):
                 image_pt = data["image"]
                 prompt = data["prompt"]
                 indices = data["idx"].tolist() if torch.is_tensor(data["idx"]) else list(data["idx"])
-                import pdb; pdb.set_trace()
                 if cfg.trainer.grad_checkpointing:
                     # ---- Compute K_masked at all steps using precomputed K_orig ----
                     loss_ntk = torch.tensor(0.0, device=device, dtype=torch_dtype)
@@ -1007,21 +1006,5 @@ if __name__ == "__main__":
         "--ntk_lambda", type=float, default=0.1,
         help="Weight for the NTK alignment loss term (0 = disabled).",
     )
-    # parser.add_argument(
-    #     "--ntk_proj_dim", type=int, default=16,
-    #     help=(
-    #         "Number of projection directions sampled at training time for the "
-    #         "masked-model NTK computation. Must be <= precompute_proj_dim. "
-    #         "Reduce if training-time memory is tight."
-    #     ),
-    # )
-    # parser.add_argument(
-    #     "--precompute_proj_dim", type=int, default=64,
-    #     help=(
-    #         "Number of projection directions stored during Jacobian precomputation. "
-    #         "A larger value gives a richer reference; at training time only "
-    #         "ntk_proj_dim of these are randomly sampled per step."
-    #     ),
-    # )
     args = parser.parse_args()
     main(args)
