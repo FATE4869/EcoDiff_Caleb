@@ -177,6 +177,7 @@ cython_debug/
 datasets/
 results/
 results_ntk/
+results_output_kernel/
 slurm_logs/
 scripts/*.sh
 wandb/
