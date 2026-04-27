@@ -16,7 +16,7 @@ from tqdm import tqdm
 import argparse
 import pickle
 
-from sdib.utils import create_pipeline, load_pipeline, get_precision
+from sdib.utils import create_pipeline, load_pipeline, get_precision, get_total_params
 from sdib.data.eval_dataset import EvalDataset
 
 
@@ -84,6 +84,11 @@ def semantic_eval(args):
             print(f"Found {n_expected} existing images in {args.save_dir}, skipping generation.")
     else:
         pipe = load_model(args, torch_dtype, device)
+        if distributed_state.is_main_process:
+            total_params = sum(p.numel() for p in pipe.transformer.parameters())
+            # total_params = get_total_params(pipe.unet if hasattr(pipe, "unet") else pipe.transformer)
+            print(f"Model has {total_params/1e9:.2f}B parameters")
+            print("Generating synthetic images with the model...")
         generator = torch.Generator(device=device).manual_seed(args.seed)
 
         all_indices = list(range(len(eval_ds)))
