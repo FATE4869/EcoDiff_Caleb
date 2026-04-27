@@ -180,5 +180,7 @@ results_ntk/
 results_output_kernel/
 slurm_logs/
 scripts/*.sh
+scripts/train_ntk.sh
+scripts/*.sbatch
 wandb/
 configs/
