@@ -166,7 +166,7 @@ def precompute_original_jacobians(
             data = dataset[sample_idx]
             prompt = [data["prompt"]] if isinstance(data["prompt"], str) else data["prompt"]
 
-            g_cpu = torch.Generator(device.type).manual_seed(seed)
+            g_cpu = torch.Generator(device.type).manual_seed(seed + sample_idx)
             with torch.no_grad():
                 prep = pipe.inference_preparation_phase(
                     prompt,
@@ -450,6 +450,7 @@ def main(args):
         attn_name=cfg.trainer.attn_name,
         use_log=cfg.trainer.use_log,
         eps=cfg.trainer.masking_eps,
+        verbose=args.verbose
     )
     cross_attn_hooker.add_hooks(init_value=cfg.trainer.init_lambda)
     lamda_block_names = cross_attn_hooker.get_lambda_block_names
@@ -463,6 +464,7 @@ def main(args):
         epsilon=cfg.trainer.epsilon,
         eps=cfg.trainer.masking_eps,
         use_log=cfg.trainer.use_log,
+        verbose=args.verbose
     )
     ff_hooker.add_hooks(init_value=cfg.trainer.init_lambda)
     ff_lambda_block_names = ff_hooker.get_lambda_block_names
@@ -477,6 +479,7 @@ def main(args):
             epsilon=cfg.trainer.epsilon,
             eps=cfg.trainer.masking_eps,
             use_log=cfg.trainer.use_log,
+            verbose=args.verbose
         )
         norm_hooker.add_hooks(init_value=cfg.trainer.init_lambda)
         norm_lambda_block_names = norm_hooker.get_lambda_block_names
@@ -646,22 +649,16 @@ def main(args):
                             ntk_step_loss = F.mse_loss(K_eff, K_orig_t.to(dtype=K_eff.dtype))
                             # Backward flows only through sigma_prime → λ; no GC recomputation.
                             (args.ntk_lambda * ntk_step_loss / n_steps).backward()
-                            # logger.info(
-                            #     f"Step {step_idx}, t: {t}. "
-                            #     f"K_orig_t: {K_orig_t.cpu().numpy()} "
-                            #     f"K_eff: {K_eff.detach().cpu().numpy()}"
-                            # )
-                            #   np.set_printoptions(precision=4, suppress=True)
-
-                            K_o = K_orig_t.cpu().float().numpy()                                                                              
-                            K_e = K_eff.detach().cpu().float().numpy()
-                            logger.info(                                                                                                      
-                                f"Step {step_idx}, t={t}\n"                                                                                 
-                                f"  K_orig :\n{K_o}\n"                                                                                        
-                                f"  K_eff  :\n{K_e}\n"                                                                                        
-                                f"  diff   :\n{K_e - K_o}\n"            
-                                f"  ntk_loss: {ntk_step_loss.item():.6f}"                                                                     
-                            )     
+                            if args.verbose:
+                                K_o = K_orig_t.cpu().float().numpy()                                                                              
+                                K_e = K_eff.detach().cpu().float().numpy()
+                                logger.info(                                                                                                      
+                                    f"Step {step_idx}, t={t}\n"                                                                                 
+                                    f"  K_orig :\n{K_o}\n"                                                                                        
+                                    f"  K_eff  :\n{K_e}\n"                                                                                        
+                                    f"  diff   :\n{K_e - K_o}\n"            
+                                    f"  ntk_loss: {ntk_step_loss.item():.6f}"                                                                     
+                                )     
                             ntk_accum = ntk_accum + ntk_step_loss.detach()
                         loss_ntk = (ntk_accum / n_steps).to(torch_dtype)
                         del J_orig, J_masked, J_eff, K_eff, K_orig_t, proj_t, ntk_accum
@@ -1050,6 +1047,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ntk_lambda", type=float, default=0.1,
         help="Weight for the NTK alignment loss term (0 = disabled).",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Log per-step K_orig / K_eff matrices and NTK loss.",
     )
     args = parser.parse_args()
     main(args)
