@@ -34,9 +34,10 @@ def load_model(args, torch_dtype, device):
                     if module == "torch.storage" and name == "_load_from_bytes":
                         return lambda b: torch.load(io.BytesIO(b), map_location="cpu", weights_only=False)
                     return super().find_class(module, name)
-
+            # import pdb; pdb.set_trace()
             with open(args.pruned_model_pt, "rb") as f:
-                model = CpuUnpickler(f).load()
+                model = pickle.load(f)
+                # model = CpuUnpickler(f).load()
             model.to(get_precision(args.mix_precision))
             if hasattr(pipe, "unet"):
                 assert isinstance(model, UNet2DConditionModel)
@@ -78,7 +79,6 @@ def semantic_eval(args):
         len(os.listdir(real_dir)) >= n_expected
         and len(os.listdir(gen_dir)) >= n_expected
     )
-    import pdb; pdb.set_trace()
     if images_exist:
         if distributed_state.is_main_process:
             print(f"Found {n_expected} existing images in {args.save_dir}, skipping generation.")

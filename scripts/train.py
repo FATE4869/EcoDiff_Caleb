@@ -62,9 +62,10 @@ def pruning_loss(
             reg_beta=cfg.loss.reg_beta,
         )
     loss_reg = attn_loss_reg + ff_loss_reg
+    norm_loss_reg = torch.tensor(0.0, device=device, dtype=torch_dtype)
     if norm_hooker:
         norm_loss_reg = calculate_reg_loss(
-            ff_loss_reg,
+            norm_loss_reg,
             norm_hooker.lambs,
             cfg.loss.reg,
             mean=cfg.loss.mean,
@@ -72,10 +73,10 @@ def pruning_loss(
             reg_alpha=cfg.loss.reg_alpha,
             reg_beta=cfg.loss.reg_beta,
         )
-        ff_loss_reg += norm_loss_reg
+        loss_reg = loss_reg + norm_loss_reg
     loss = loss_reconstruct + cfg.trainer.beta * loss_reg
     if logger:
-        log_output = f"ff_loss_reg: {ff_loss_reg.item()}" + f" attn_loss_reg: {attn_loss_reg.item()}"
+        log_output = f"loss_reconstruct: {loss_reconstruct.item()} ff_loss_reg: {ff_loss_reg.item()} attn_loss_reg: {attn_loss_reg.item()}"
         if norm_hooker:
             log_output += f" norm_loss_reg: {norm_loss_reg.item()}"
         logger.info(log_output)
@@ -295,9 +296,10 @@ def main(args):
     torch.cuda.empty_cache()
 
     optimizer.zero_grad()
-    # loss_min = 1e3  # for saving the best lambda
-    total_step = cfg.trainer.epochs * cfg.data.size
-    with tqdm.tqdm(total=total_step) as pbar:
+    total_steps = cfg.trainer.epochs * len(dataloader)
+    total_updates = total_steps // cfg.trainer.accumulate_grad_batches
+    global_step = 0
+    with tqdm.tqdm(total=total_steps, desc="param updates") as pbar:
         for i in range(cfg.trainer.epochs):
             for idx, data in enumerate(dataloader):
                 image_pt = data["image"]
@@ -430,13 +432,16 @@ def main(args):
                     )
                     accelerator.backward(loss)
 
-                if (idx * batch_size) % cfg.trainer.accumulate_grad_batches == 0:
+                if (idx + 1) % cfg.trainer.accumulate_grad_batches == 0:
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
+                    global_step += 1
+                pbar.set_postfix(epoch=f"{i+1}/{cfg.trainer.epochs}", idx=idx, step=f"{global_step}/{total_updates}")
+                pbar.update()
 
                 # START LOGGING
-                if (idx * batch_size) % cfg.logger.plot_interval == 0:
+                if (global_step) % cfg.logger.plot_interval == 0:
                     if cfg.logger.type == "wandb":
                         wandb.log(
                             {
@@ -483,8 +488,8 @@ def main(args):
                         )
                     else:
                         path = os.path.join(args.save_dir, cfg.logger.project, cfg.logger.notes, "images")
-                        val_path = os.path.join(path, "validation", f"epoch_{i}_step_{idx}")
-                        train_path = os.path.join(path, "train", f"epoch_{i}_step_{idx}")
+                        val_path = os.path.join(path, "validation", f"epoch_{i}_step_{global_step}")
+                        train_path = os.path.join(path, "train", f"epoch_{i}_step_{global_step}")
                         for path, prompts in zip(
                             [val_path, train_path], [validation_prompts, train_dataset[0]["prompt"]]
                         ):
@@ -511,22 +516,23 @@ def main(args):
                             )
                             torch.cuda.empty_cache()
 
-                    # log attn head sparsity
-                    for n, lamb in zip(lamda_block_names, cross_attn_hooker.lambs):
-                        logger.info(f"lambda in {n}: {lamb.clamp(min=0).tolist()}")
+                    if args.verbose:
+                        # log attn head sparsity
+                        for n, lamb in zip(lamda_block_names, cross_attn_hooker.lambs):
+                            logger.info(f"lambda in {n}: {lamb.clamp(min=0).tolist()}")
 
-                    # log ffn sparsity
-                    for n, lamb in zip(ff_lambda_block_names, ff_hooker.lambs):
-                        logger.info(
-                            f"lambda {n}: max {lamb.max().item()}, min {lamb.min().item()}, mean {lamb.mean().item()}"
-                        )
-                    # log norm sparsity
-                    if cfg.trainer.n_lr != 0:
-                        for n, lamb in zip(norm_lambda_block_names, norm_hooker.lambs):
+                        # log ffn sparsity
+                        for n, lamb in zip(ff_lambda_block_names, ff_hooker.lambs):
                             logger.info(
-                                f"lambda {n}: max {lamb.max().item()}, "
-                                + f"min {lamb.min().item()}, mean {lamb.mean().item()}"
+                                f"lambda {n}: max {lamb.max().item()}, min {lamb.min().item()}, mean {lamb.mean().item()}"
                             )
+                        # log norm sparsity
+                        if cfg.trainer.n_lr != 0:
+                            for n, lamb in zip(norm_lambda_block_names, norm_hooker.lambs):
+                                logger.info(
+                                    f"lambda {n}: max {lamb.max().item()}, "
+                                    + f"min {lamb.min().item()}, mean {lamb.mean().item()}"
+                                )
 
                     masking_threshold = 0
                     remain_head, total_head, sparsity = calculate_mask_sparsity(cross_attn_hooker, masking_threshold)
@@ -549,13 +555,12 @@ def main(args):
                     )
                     logger.info(f"loss_reconstruct: {loss_reconstruct}, loss_reg: {loss_reg}, total_loss: {loss}")
 
-                    cross_attn_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{idx}_attn.pt"))
-                    ff_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{idx}_ff.pt"))
+                    cross_attn_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_attn.pt"))
+                    ff_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_ff.pt"))
 
                     if cfg.trainer.n_lr != 0:
-                        norm_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{idx}_norm.pt"))
-                    logger.info(f"epoch: {i}, step: {idx}: saving lambda")
-                pbar.update()
+                        norm_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_norm.pt"))
+                    logger.info(f"epoch: {i}, step: {global_step}: saving lambda")
 
         logger.info(f"epoch {i+1}/{cfg.trainer.epochs}")
 
@@ -613,5 +618,6 @@ if __name__ == "__main__":
     parser.add_argument("--islaunch", action="store_true", help="Launch accelerator")
     parser.add_argument("--task", "-t", type=str, default="general", help="Task to perform, might need to change")
     parser.add_argument("--load_lambda", "-l", action="store_true", help="Load lambda from checkpoint")
+    parser.add_argument("--verbose", action="store_true", help="Log per-layer lambda values at each plot interval")
     args = parser.parse_args()
     main(args)

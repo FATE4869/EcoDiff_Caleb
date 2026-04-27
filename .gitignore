@@ -176,3 +176,8 @@ cython_debug/
 # EcoDiff ignore file
 datasets/
 results/
+results_ntk/
+slurm_logs/
+scripts/*.sh
+wandb/
+configs/

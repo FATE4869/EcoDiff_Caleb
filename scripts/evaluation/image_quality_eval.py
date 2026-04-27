@@ -23,7 +23,7 @@ from sdib.utils import create_pipeline, get_clip_encoders, get_precision, save_i
 def parse():
     parser = argparse.ArgumentParser(description="Image Quality Evaluation")
     parser.add_argument("--task", type=str, required=True, help="task including gen (generating dataset), eval")
-    parser.add_argument("--data_dir", type=str, default="./datasets")
+    parser.add_argument("--data_dir", type=str)
     parser.add_argument(
         "--dataset_name", "-dn", type=str, default="laion", help="dataset name, available laion, coco, flickr"
     )
@@ -124,13 +124,14 @@ def pil_to_tensor(path, trans_func: Callable, size=None):
 
 
 def data_preparation(args, save_path_list, prompt_save_path):
+    dataset_dir = os.getenv("DATASET_DIR")
     ds = EvalDataset(
-        data_dir=args.data_dir,
+        data_dir=dataset_dir,
         dataset_name=args.dataset_name,
         image_size=args.image_size,
         max_size=args.data_size,
     )
-
+    import pdb; pdb.set_trace()
     # precision
     precision = get_precision(args.precision)
 

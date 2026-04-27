@@ -51,7 +51,7 @@ def main(args):
         pruning_module = original_pipe.unet
     else:
         pruning_module = original_pipe.transformer
-
+    import pdb; pdb.set_trace()
     show_model_param_summary(pruning_module, modules_of_interest)
     show_model_memory_consumption_summary(pruning_module, memory_usage_device, modules_of_interest)
 
@@ -62,7 +62,7 @@ def main(args):
         )
     del original_pipe
     torch.cuda.empty_cache()
-
+    
     # get masked model
     pipe, hookers = create_pipeline(
         args.model,

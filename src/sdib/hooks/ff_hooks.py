@@ -203,7 +203,10 @@ class FeedForwardHooker:
         else:
             raise NotImplementedError
         epsilon = kwargs.get("epsilon", 0.0)
-        hidden_states = hidden_states * mask + torch.randn_like(hidden_states) * epsilon * (1 - mask)
+        if epsilon:
+            hidden_states = hidden_states * mask + torch.randn_like(hidden_states) * epsilon * (1 - mask)
+        else:
+            hidden_states = hidden_states * mask
         return hidden_states.to(hidden_states_dtype)
 
     def get_ff_masking_hook(self, init_value=1.0):

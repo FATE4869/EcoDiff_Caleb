@@ -28,6 +28,7 @@ class PromptImageDataset(Dataset):
         self.validity_check()
         self.prepare_metadata()
 
+
     def validity_check(self):
         if not os.path.exists(self.save_dir):
             print(f"save_dir {self.save_dir} does not exist, creating the directory")
@@ -50,16 +51,17 @@ class PromptImageDataset(Dataset):
         # always overwrite the save_dir, need to find a way to avoid this
         ptpaths, imgpaths, idxlist = [], [], []
         all_exist = True
+        self.final_latent_dir = os.path.join(self.save_dir, "final_latent")
         for i in range(self.size):
-            ptpath =os.path.join(self.save_dir, f"{i}.pt")
+            ptpath =os.path.join(self.final_latent_dir, f"{i}.pt")
             ptpaths.append(ptpath)
-            imgpath = os.path.join(self.save_dir, f"{i}.png")
+            imgpath = os.path.join(self.final_latent_dir, f"{i}.png")
             imgpaths.append(imgpath)
             idxlist.append(i)
             if not os.path.exists(ptpath) or not os.path.exists(imgpath):
                 all_exist = False
         if all_exist:
-            print(f"All latent tensors and images already exist in {self.save_dir}, skipping generation ...")
+            print(f"All latent tensors and images already exist in {self.final_latent_dir}, skipping generation ...")
             return
 
 
@@ -134,7 +136,7 @@ class PromptImageDataset(Dataset):
         if self.df is None:
             raise ValueError("metadata is not prepared")
         example = {}
-        example["image"] = torch.load(os.path.join(self.save_dir, f"{idx}.pt"), weights_only=False)
+        example["image"] = torch.load(os.path.join(self.final_latent_dir, f"{idx}.pt"), weights_only=False)
         example["prompt"] = self.df[idx]
         example["idx"] = idx
         return example

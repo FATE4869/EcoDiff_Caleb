@@ -16,6 +16,7 @@ from diffusers.optimization import get_scheduler
 from torch.utils.data import DataLoader
 
 import argparse
+from contextlib import contextmanager
 import wandb
 from sdib.data import DiTDataset, PromptImageDataset
 from sdib.hooks import CrossAttentionExtractionHook, FeedForwardHooker, NormHooker
@@ -34,78 +35,100 @@ from sdib.utils import (
 # NTK helpers
 # ---------------------------------------------------------------------------
 
-def compute_lambda_ntk_matrix(
+@contextmanager
+def ntk_masking_context(hookers, use_sigmoid_lambda: bool = False):
+    """Switch hookers to 'binary' masking with explicit leaf mask tensors.
+
+    Differentiating w.r.t. these leaf tensors avoids the hard-concrete
+    saturation problem (hard_concrete(λ=5) clamps to 1 → zero gradient).
+
+    Original model  (use_sigmoid_lambda=False):
+        mask = ones  [requires_grad=True]
+        → J = ∂f/∂mask evaluated at full activations; always non-zero.
+
+    Masked model    (use_sigmoid_lambda=True):
+        mask = sigmoid(λ)  [leaf via autograd chain through λ]
+        → J = ∂f_masked/∂mask; gradient flows back to λ through sigmoid.
+
+    Yields the flat list of mask leaf tensors (ref_params) to use as the
+    `lambdas` argument of compute_ntk_matrix.
+    """
+    saved = [(list(h.lambs), h.masking) for h in hookers]
+    ref_params = []
+    for hooker in hookers:
+        if use_sigmoid_lambda:
+            new_lambs = [torch.sigmoid(l) for l in hooker.lambs]
+        else:
+            new_lambs = [torch.ones_like(l).requires_grad_(True) for l in hooker.lambs]
+        hooker.lambs = new_lambs
+        hooker.masking = "binary"
+        ref_params.extend(new_lambs)
+    try:
+        yield ref_params
+    finally:
+        for hooker, (orig_lambs, orig_masking) in zip(hookers, saved):
+            hooker.lambs = orig_lambs
+            hooker.masking = orig_masking
+
+
+def compute_ntk_matrix(
     outputs: torch.Tensor,
-    lambdas: list,
+    mask_params: list,
     proj_dim: int = 16,
     proj: torch.Tensor = None,
+    create_graph: bool = False,
 ) -> torch.Tensor:
-    """
-    Compute the empirical NTK matrix w.r.t. the lambda (mask) parameters.
+    """Compute the empirical NTK matrix w.r.t. mask_params.
 
-    K[i,j] = < J_lambda f(x_i), J_lambda f(x_j) >
+    K[i,j] = <∂f(x_i)/∂mask, ∂f(x_j)/∂mask>
 
-    where J_lambda f(x) = d(output(x)) / d(lambdas) is the Jacobian of the
-    model output w.r.t. all mask parameters.
+    mask_params are per-head/per-neuron scale tensors set up by
+    ntk_masking_context.  For the original model they are all-ones leaves;
+    for the masked model they are sigmoid(λ) so gradient flows to λ.
 
-    To keep the computation tractable, the output is first projected to
-    `proj_dim` dimensions via a fixed random matrix before computing
-    gradients. Total backward passes = B * proj_dim.
-
-    Args:
-        outputs:  Model outputs [B, ...], differentiable w.r.t. lambdas.
-        lambdas:  List of lambda tensors (mask parameters).
-        proj_dim: Random projection dimension.
-        proj:     Optional precomputed projection matrix [D, proj_dim].
-                  If provided, it is used as-is (ensures the same projection
-                  is used across original and masked model calls). If None,
-                  a new projection is generated with a fixed seed.
-
-    Returns:
-        K: [B, B] row-normalised NTK matrix.
+    create_graph=True is required when computing K_masked so that
+    ∂L_ntk/∂λ is non-zero (K_masked depends on λ through the nonlinear
+    forward pass and the sigmoid mask values).
     """
     B = outputs.shape[0]
-    out_flat = outputs.reshape(B, -1).float()   # [B, D]
+    out_flat = outputs.reshape(B, -1).float()
     D = out_flat.shape[1]
 
     if proj is None:
-        # Fixed reproducible random projection [D, proj_dim]
         gen = torch.Generator(device=outputs.device).manual_seed(0)
         proj = torch.randn(D, proj_dim, generator=gen,
                            device=outputs.device, dtype=torch.float32)
-        proj = F.normalize(proj, dim=0)         # unit-norm columns
+        proj = F.normalize(proj, dim=0)
     else:
         proj = proj.to(device=outputs.device, dtype=torch.float32)
 
-    # Projected outputs: [B, proj_dim] — still differentiable w.r.t. lambdas
-    projected = out_flat @ proj
+    projected = out_flat @ proj  # [B, proj_dim], differentiable w.r.t. mask_params
 
-    # Build Jacobian row by row: J[i, k, :] = d(projected[i,k]) / d(lambdas_flat)
     J_list = []
     for i in range(B):
         row = []
         for k in range(proj_dim):
             is_last = (i == B - 1 and k == proj_dim - 1)
             g = torch.autograd.grad(
-                projected[i, k], lambdas,
-                retain_graph=not is_last, create_graph=False,
+                projected[i, k], mask_params,
+                retain_graph=(not is_last) or create_graph,
+                create_graph=create_graph,
                 allow_unused=True,
             )
             row.append(torch.cat([
                 gg.flatten().float() if gg is not None
-                else torch.zeros(l.numel(), dtype=torch.float32, device=l.device)
-                for gg, l in zip(g, lambdas)
+                else torch.zeros(p.numel(), dtype=torch.float32, device=p.device)
+                for gg, p in zip(g, mask_params)
             ]))
-        J_list.append(torch.stack(row))         # [proj_dim, P]
+        J_list.append(torch.stack(row))  # [proj_dim, P]
 
-    J = torch.stack(J_list)                     # [B, proj_dim, P] P is the number of lambda parameters
-    J_flat = J.reshape(B, -1)                   # [B, proj_dim * P]
+    J = torch.stack(J_list)              # [B, proj_dim, P]
+    J_flat = J.reshape(B, -1)            # [B, proj_dim * P]
 
-    # Row-normalise for numerical stability
     norms = J_flat.norm(dim=1, keepdim=True).clamp(min=1e-8)
     J_flat = J_flat / norms
 
-    return J_flat @ J_flat.T                    # [B, B]
+    return J_flat @ J_flat.T             # [B, B]
 
 
 def precompute_original_jacobians(
@@ -119,91 +142,91 @@ def precompute_original_jacobians(
     save_dir: str = "jacobians",
 ):
     """
-    Precompute per-step Jacobian vectors for the original (lambda=init_lambda) model
+    Precompute per-step Jacobian vectors for the original (unmasked) model
     over all samples in the dataset.  Results are saved to disk as a list of dicts:
 
-        [{'J': tensor[proj_dim, P], 'proj': tensor[D, proj_dim]}, ...]  # len = n_steps
+        [{'J': tensor[proj_dim, P], 'proj': tensor[D, proj_dim],
+          'z_in': tensor}, ...]   # len = n_steps
 
-    where P = total number of lambda parameters and D = flattened latent dimension.
+    P = total number of mask units (heads + neurons across all masked layers).
+    J = ∂f(x)/∂mask evaluated at mask=1 (full-model, no pruning).  Using
+    all-ones leaves (not hard_concrete(λ)) avoids the saturation problem:
+    hard_concrete(init_lambda=5) clamps to 1 → zero gradient.  At mask=1 the
+    gradient ∂f/∂mask_h is the sensitivity of the output to each head/neuron,
+    which is always non-zero for active layers.
 
-    hookers: list of hooker objects (e.g. [cross_attn_hooker, ff_hooker, norm_hooker]).
-             Their .lambs are temporarily replaced with init_lambda tensors (requires_grad=True)
-             so the forward pass builds a computation graph through them. Using init_lambda
-             (rather than hardcoded 1) is more principled: for sigmoid masking sigmoid(1)≈0.73
-             whereas init_lambda is the actual starting point of training.
-    Projection matrices are generated with a CPU generator seeded by step_idx so
-    they are device-independent and reproducible.
+    hookers: list of hooker objects (cross_attn, ff, norm).
+    Projection matrices are seeded by step_idx for reproducibility.
     """
     os.makedirs(save_dir, exist_ok=True)
-    init_lambda = cfg.trainer.init_lambda
 
     if hasattr(pipe, 'transformer') and hasattr(pipe.transformer, 'enable_gradient_checkpointing'):
         pipe.transformer.enable_gradient_checkpointing()
 
-    # Swap hooker lambs with fixed init_lambda tensors once for the entire precomputation.
-    # No training happens here so orig_lambs never change between samples.
-    # autograd.grad (not backward) is used, so ref_lambdas accumulate no .grad state
-    # and can be safely reused across samples — each forward pass builds an independent graph.
-    orig_lambs_per_hooker = []
-    ref_lambdas = []
-    for hooker in hookers:
-        orig_lambs_per_hooker.append(list(hooker.lambs))
-        refs = [torch.full_like(l, init_lambda).requires_grad_(True) for l in hooker.lambs]
-        hooker.lambs = refs
-        ref_lambdas.extend(refs)
+    # Use ntk_masking_context: switches masking to "binary" and sets lambs to
+    # all-ones leaf tensors.  autograd.grad differentiates w.r.t. these leaves
+    # (not λ), so the Jacobian is ∂f/∂mask at mask=1 — always non-zero.
+    # The context is entered once; the same all-ones leaves are reused across
+    # all samples (each forward pass builds an independent graph via autograd.grad).
+    with ntk_masking_context(hookers, use_sigmoid_lambda=False) as ref_params:
+        try:
+            for sample_idx in tqdm.tqdm(range(len(dataset)), desc="Precomputing Jacobians"):
+                save_path = os.path.join(save_dir, f"jacobian_{sample_idx}.pt")
+                if os.path.exists(save_path):
+                    continue
+                data = dataset[sample_idx]
+                prompt = [data["prompt"]] if isinstance(data["prompt"], str) else data["prompt"]
 
-    try:
-        for sample_idx in tqdm.tqdm(range(len(dataset)), desc="Precomputing Jacobians"):
-            save_path = os.path.join(save_dir, f"jacobian_{sample_idx}.pt")
-            if os.path.exists(save_path):
-                continue
-            data = dataset[sample_idx]
-            prompt = [data["prompt"]] if isinstance(data["prompt"], str) else data["prompt"]
-
-            g_cpu = torch.Generator(device.type).manual_seed(seed)
-            with torch.no_grad():
-                prep = pipe.inference_preparation_phase(
-                    prompt,
-                    generator=g_cpu,
-                    num_inference_steps=cfg.trainer.num_intervention_steps,
-                    output_type="latent",
-                )
-
-            steps_data = []
-            for step_idx, t in enumerate(prep.timesteps):
-                with torch.set_grad_enabled(True):
-                    out_latents = pipe.inference_with_grad_denoising_step(step_idx, t, prep)
-
-                D = out_latents.reshape(1, -1).shape[1]
-                gen = torch.Generator().manual_seed(step_idx)   # CPU generator — device-independent
-                proj = F.normalize(torch.randn(D, proj_dim, generator=gen), dim=0).to(device)
-
-                out_flat = out_latents.reshape(1, -1).float()
-                projected = out_flat @ proj   # [1, proj_dim]
-
-                J_step = torch.zeros(proj_dim, sum(l.numel() for l in ref_lambdas),
-                                     dtype=torch.float32)
-                for k in range(proj_dim):
-                    is_last = (k == proj_dim - 1)
-                    g = torch.autograd.grad(
-                        projected[0, k], ref_lambdas,
-                        retain_graph=not is_last, create_graph=False,
-                        allow_unused=True,
+                g_cpu = torch.Generator(device.type).manual_seed(seed)
+                with torch.no_grad():
+                    prep = pipe.inference_preparation_phase(
+                        prompt,
+                        generator=g_cpu,
+                        num_inference_steps=cfg.trainer.num_intervention_steps,
+                        output_type="latent",
                     )
-                    J_step[k] = torch.cat([
-                        gg.flatten().float().cpu() if gg is not None
-                        else torch.zeros(l.numel(), dtype=torch.float32)
-                        for gg, l in zip(g, ref_lambdas)
-                    ])
-                steps_data.append({'J': J_step, 'proj': proj.cpu()})
-                prep.latents = out_latents.detach()
-                torch.cuda.empty_cache()
-            # import pdb; pdb.set_trace() # sanity check
-            torch.save(steps_data, save_path)
-    finally:
-        # Always restore the original trainable lambs regardless of errors.
-        for hooker, orig in zip(hookers, orig_lambs_per_hooker):
-            hooker.lambs = orig
+
+                steps_data = []
+                for step_idx, t in tqdm.tqdm(
+                    enumerate(prep.timesteps),
+                    total=len(prep.timesteps),
+                    desc=f"  sample {sample_idx} steps",
+                    leave=False,
+                ):
+                    with torch.set_grad_enabled(True):
+                        out_latents = pipe.inference_with_grad_denoising_step(step_idx, t, prep)
+
+                    D = out_latents.reshape(1, -1).shape[1]
+                    gen = torch.Generator().manual_seed(step_idx)
+                    proj = F.normalize(torch.randn(D, proj_dim, generator=gen), dim=0).to(device)
+
+                    out_flat = out_latents.reshape(1, -1).float()
+                    projected = out_flat @ proj  # [1, proj_dim]
+
+                    J_step = torch.zeros(proj_dim, sum(p.numel() for p in ref_params),
+                                         dtype=torch.float32)
+                    for k in tqdm.tqdm(range(proj_dim), desc="   proj_dim", leave=False):
+                        is_last = (k == proj_dim - 1)
+                        g = torch.autograd.grad(
+                            projected[0, k], ref_params,
+                            retain_graph=not is_last, create_graph=False,
+                            allow_unused=True,
+                        )
+                        J_step[k] = torch.cat([
+                            gg.flatten().float().cpu() if gg is not None
+                            else torch.zeros(p.numel(), dtype=torch.float32)
+                            for gg, p in zip(g, ref_params)
+                        ])
+                    steps_data.append({
+                        'J': J_step,
+                        'proj': proj.cpu(),
+                        'z_in': prep.latents.detach().cpu(),
+                    })
+                    prep.latents = out_latents.detach()
+                    torch.cuda.empty_cache()
+                torch.save(steps_data, save_path)
+        finally:
+            pass  # ntk_masking_context __exit__ restores hookers
 
     if hasattr(pipe, 'transformer') and hasattr(pipe.transformer, 'disable_gradient_checkpointing'):
         pipe.transformer.disable_gradient_checkpointing()
@@ -217,7 +240,7 @@ def compute_k_orig_from_jacobians(jacobian_dir, indices, step_idx, device, proj_
     proj_indices: optional 1-D LongTensor of row indices into the stored
                   [precompute_proj_dim, P] Jacobian.  Use this to subsample
                   to args.ntk_proj_dim directions at training time, passing
-                  the same indices to compute_lambda_ntk_matrix so that both
+                  the same indices to compute_ntk_matrix so that both
                   K_orig and K_masked use identical projection directions.
     """
     Js = [torch.load(os.path.join(jacobian_dir, f"jacobian_{i}.pt"),
@@ -306,26 +329,10 @@ def pruning_loss(
         )
         loss_reg = loss_reg + norm_loss_reg
 
-    # --- NTK alignment loss ---
-    # K_masked[i,j] = <J_lambda f_masked(x_i), J_lambda f_masked(x_j)>
-    # K_orig[i,j]   = <J_lambda f_orig(x_i),   J_lambda f_orig(x_j)>  (fixed)
+    # NTK loss is computed per-step in the training loop; pruning_loss only
+    # handles reconstruction + regularisation.  loss_ntk is passed in as a
+    # pre-computed value (or 0) and added to the total below.
     loss_ntk = torch.tensor(0.0, device=device, dtype=torch_dtype)
-    if ntk_lambda > 0.0:
-        B = image["images"].shape[0]
-        if B < 2:
-            if logger:
-                logger.warning("NTK loss skipped: batch size < 2.")
-        elif K_orig is None:
-            if logger:
-                logger.warning("NTK loss skipped: K_orig not provided.")
-        else:
-            lambdas = cross_attn_hooker.lambs + ff_hooker.lambs
-            if norm_hooker is not None:
-                lambdas = lambdas + norm_hooker.lambs
-            K_masked = compute_lambda_ntk_matrix(
-                image["images"], lambdas, ntk_proj_dim
-            )
-            loss_ntk = F.mse_loss(K_masked, K_orig.to(K_masked.dtype)).to(torch_dtype)
 
     loss = (
         loss_reconstruct
@@ -352,6 +359,8 @@ def pruning_loss(
 
 def main(args):
     cfg = load_config(args.cfg)
+    args.ntk_proj_dim = cfg.data.ntk_proj_dim
+    args.precompute_proj_dim = cfg.data.precompute_proj_dim
     device = torch.device(cfg.trainer.device)
     with open(args.validation_prompts_path, "r") as f:
         validation_prompts = yaml.safe_load(f)
@@ -408,8 +417,7 @@ def main(args):
     torch_dtype = get_precision(cfg.trainer.precision)
 
     pipe = load_pipeline(cfg.trainer.model, torch_dtype, cfg.trainer.disable_progress_bar)
-    # pipe.to(device)
-
+    pipe.to(device)
     pipe.vae.requires_grad_(False)
     if cfg.trainer.model in ["sd3", "dit", "flux", "flux_dev"]:
         pipe.transformer.requires_grad_(False)
@@ -542,7 +550,7 @@ def main(args):
     )
 
     # ---- Precompute original model Jacobians (once, before training) ----
-    jacobian_dir = args.jacobian_dir or os.path.join(args.save_dir, "jacobians")
+    jacobian_dir = os.path.join(cfg.data.save_dir, "jacobians")
     if args.ntk_lambda > 0.0:
         all_cached = all(
             os.path.exists(os.path.join(jacobian_dir, f"jacobian_{i}.pt"))
@@ -587,11 +595,11 @@ def main(args):
                 image_pt = data["image"]
                 prompt = data["prompt"]
                 indices = data["idx"].tolist() if torch.is_tensor(data["idx"]) else list(data["idx"])
-                
+                import pdb; pdb.set_trace()
                 if cfg.trainer.grad_checkpointing:
                     # ---- Compute K_masked at all steps using precomputed K_orig ----
                     loss_ntk = torch.tensor(0.0, device=device, dtype=torch_dtype)
-                    if args.ntk_lambda > 0.0 and len(indices) >= 2:
+                    if args.ntk_lambda > 0.0 and len(indices) >= 1:
                         g_cpu_ntk = torch.Generator(device.type).manual_seed(seed)
                         with torch.no_grad():
                             prep_ntk = pipe.inference_preparation_phase(
@@ -600,33 +608,48 @@ def main(args):
                                 num_inference_steps=cfg.trainer.num_intervention_steps,
                                 output_type="latent",
                             )
-                        lambdas = cross_attn_hooker.lambs + ff_hooker.lambs
-                        if _norm_hooker is not None:
-                            lambdas = lambdas + _norm_hooker.lambs
+                        hookers_list = [cross_attn_hooker, ff_hooker] + ([_norm_hooker] if _norm_hooker else [])
                         n_steps = len(prep_ntk.timesteps)
                         ntk_accum = torch.tensor(0.0, device=device, dtype=torch.float32)
                         for step_idx, t in enumerate(prep_ntk.timesteps):
-                            with torch.set_grad_enabled(True):
-                                out_latents_ntk = pipe.inference_with_grad_denoising_step(
-                                    step_idx, t, prep_ntk
-                                )
-                            proj_full = torch.load(
-                                os.path.join(jacobian_dir, f"jacobian_{indices[0]}.pt"),
-                                weights_only=False,
-                            )[step_idx]['proj'].to(device)   # [D, precompute_proj_dim]
+                            # Load all per-step data for the batch in one pass to avoid
+                            # re-reading files and to extract z_in, proj, J together.
+                            batch_step_data = [
+                                torch.load(
+                                    os.path.join(jacobian_dir, f"jacobian_{i}.pt"),
+                                    weights_only=False,
+                                )[step_idx]
+                                for i in indices
+                            ]
+                            # Use original model's z_k so K_masked and K_orig are evaluated
+                            # at the same input point, making the comparison principled.
+                            prep_ntk.latents = torch.cat(
+                                [d['z_in'] for d in batch_step_data], dim=0
+                            ).to(device)
+                            proj_full = batch_step_data[0]['proj'].to(device)
                             proj_indices = torch.randperm(proj_full.shape[1], device=device)[:args.ntk_proj_dim]
-                            proj_t = proj_full[:, proj_indices]  # [D, ntk_proj_dim]
-                            K_orig_t = compute_k_orig_from_jacobians(
-                                jacobian_dir, indices, step_idx, device, proj_indices=proj_indices
-                            )
-                            K_masked_t = compute_lambda_ntk_matrix(
-                                out_latents_ntk, lambdas, args.ntk_proj_dim, proj_t
-                            )
-                            logger.info(f"Step {step_idx}, t: {t}. K_orig_t: {K_orig_t.cpu().numpy()} K_masked_t: {K_masked_t.cpu().numpy()}")
+                            proj_t = proj_full[:, proj_indices]
+                            # K_orig from precomputed Jacobians (mask=1 reference)
+                            J_batch = torch.stack([d['J'] for d in batch_step_data]).to(device)
+                            J_sub = J_batch[:, proj_indices, :]
+                            J_flat = J_sub.reshape(len(indices), -1).float()
+                            norms = J_flat.norm(dim=1, keepdim=True).clamp(min=1e-8)
+                            K_orig_t = (J_flat / norms) @ (J_flat / norms).T
+                            # K_masked: forward with sigmoid(λ) masks, differentiate w.r.t.
+                            # mask values so gradient flows back to λ via sigmoid.
+                            with ntk_masking_context(hookers_list, use_sigmoid_lambda=True) as ntk_params:
+                                with torch.set_grad_enabled(True):
+                                    out_latents_ntk = pipe.inference_with_grad_denoising_step(
+                                        step_idx, t, prep_ntk
+                                    )
+                                K_masked_t = compute_ntk_matrix(
+                                    out_latents_ntk, ntk_params, args.ntk_proj_dim,
+                                    proj_t, create_graph=True,
+                                )
+                            logger.info(f"Step {step_idx}, t: {t}. K_orig_t: {K_orig_t.detach().cpu().numpy()} K_masked_t: {K_masked_t.detach().cpu().numpy()}")
                             ntk_accum = ntk_accum + F.mse_loss(
                                 K_masked_t, K_orig_t.to(dtype=K_masked_t.dtype)
                             )
-                            prep_ntk.latents = out_latents_ntk.detach()
                         loss_ntk = (ntk_accum / n_steps).to(torch_dtype)
                         del out_latents_ntk, K_masked_t, K_orig_t, proj_t, ntk_accum
                         torch.cuda.empty_cache()
@@ -723,44 +746,69 @@ def main(args):
                             output_type="latent",
                         )
 
-                    lambdas = cross_attn_hooker.lambs + ff_hooker.lambs
-                    if _norm_hooker is not None:
-                        lambdas = lambdas + _norm_hooker.lambs
-
+                    hookers_list = [cross_attn_hooker, ff_hooker] + ([_norm_hooker] if _norm_hooker else [])
                     B = prep.latents.shape[0]
                     n_steps = len(prep.timesteps)
                     loss_ntk = torch.tensor(0.0, device=device, dtype=torch.float32)
 
-                    for step_idx, t in enumerate(prep.timesteps):
-                        with torch.set_grad_enabled(True):
-                            out_latents = pipe.inference_with_grad_denoising_step(
-                                step_idx, t, prep
-                            )
-                        if args.ntk_lambda > 0.0 and B >= 2:
-                            proj_full = torch.load(
-                                os.path.join(jacobian_dir, f"jacobian_{indices[0]}.pt"),
-                                weights_only=False,
-                            )[step_idx]['proj'].to(device)   # [D, precompute_proj_dim]
+                    # ---- Per-step NTK: use original model's z_k so K_masked and K_orig
+                    #      are evaluated at the same input point each step. ----
+                    if args.ntk_lambda > 0.0 and B >= 2:
+                        for step_idx, t in enumerate(prep.timesteps):
+                            batch_step_data = [
+                                torch.load(
+                                    os.path.join(jacobian_dir, f"jacobian_{i}.pt"),
+                                    weights_only=False,
+                                )[step_idx]
+                                for i in indices
+                            ]
+                            prep.latents = torch.cat(
+                                [d['z_in'] for d in batch_step_data], dim=0
+                            ).to(device)
+                            proj_full = batch_step_data[0]['proj'].to(device)
                             proj_indices = torch.randperm(proj_full.shape[1], device=device)[:args.ntk_proj_dim]
-                            proj_t = proj_full[:, proj_indices]  # [D, ntk_proj_dim]
-                            K_orig_t = compute_k_orig_from_jacobians(
-                                jacobian_dir, indices, step_idx, device, proj_indices=proj_indices
-                            )
-                            K_masked_t = compute_lambda_ntk_matrix(
-                                out_latents, lambdas, args.ntk_proj_dim, proj_t
-                            )
+                            proj_t = proj_full[:, proj_indices]
+                            J_batch = torch.stack([d['J'] for d in batch_step_data]).to(device)
+                            J_sub = J_batch[:, proj_indices, :]
+                            J_flat = J_sub.reshape(len(indices), -1).float()
+                            norms = J_flat.norm(dim=1, keepdim=True).clamp(min=1e-8)
+                            K_orig_t = (J_flat / norms) @ (J_flat / norms).T
+                            with ntk_masking_context(hookers_list, use_sigmoid_lambda=True) as ntk_params:
+                                with torch.set_grad_enabled(True):
+                                    out_latents = pipe.inference_with_grad_denoising_step(
+                                        step_idx, t, prep
+                                    )
+                                K_masked_t = compute_ntk_matrix(
+                                    out_latents, ntk_params, args.ntk_proj_dim,
+                                    proj_t, create_graph=True,
+                                )
                             loss_ntk = loss_ntk + F.mse_loss(
                                 K_masked_t, K_orig_t.to(dtype=K_masked_t.dtype)
                             )
-                        prep.latents = out_latents.detach()
 
                     loss_ntk = (loss_ntk / n_steps).to(torch_dtype)
 
-                    # ---- Decode final latents for reconstruction loss ----
+                    # ---- Reconstruction: run masked model's own trajectory ----
+                    # Use a fresh prep so the NTK loop's z_k overwrites don't affect
+                    # the latents seen during reconstruction.
+                    g_cpu = torch.Generator(device.type).manual_seed(seed)
+                    with torch.no_grad():
+                        prep_recon = pipe.inference_preparation_phase(
+                            prompt,
+                            generator=g_cpu,
+                            num_inference_steps=cfg.trainer.num_intervention_steps,
+                            output_type="latent",
+                        )
+                        for step_idx, t in enumerate(prep_recon.timesteps):
+                            out_latents = pipe.inference_with_grad_denoising_step(
+                                step_idx, t, prep_recon
+                            )
+                            prep_recon.latents = out_latents.detach()
+
                     final_latents = out_latents.detach().requires_grad_(True)
                     with torch.set_grad_enabled(True):
                         image = pipe.inference_with_grad_aft_denoising(
-                            final_latents, prep.prompt_embeds, g_cpu, "latent", True, device
+                            final_latents, prep_recon.prompt_embeds, g_cpu, "latent", True, device
                         )
 
                     loss, loss_reconstruct, loss_reg, _ = pruning_loss(
@@ -951,29 +999,29 @@ if __name__ == "__main__":
     parser.add_argument("--islaunch", action="store_true")
     parser.add_argument("--task", "-t", type=str, default="general")
     parser.add_argument("--load_lambda", "-l", action="store_true")
-    parser.add_argument(
-        "--jacobian_dir", type=str, default=None,
-        help="Directory for precomputed Jacobians. Defaults to <save_dir>/jacobians.",
-    )
+    # parser.add_argument(
+    #     "--jacobian_dir", type=str, default=None,
+    #     help="Directory for precomputed Jacobians. Defaults to <save_dir>/jacobians.",
+    # )
     parser.add_argument(
         "--ntk_lambda", type=float, default=0.1,
         help="Weight for the NTK alignment loss term (0 = disabled).",
     )
-    parser.add_argument(
-        "--ntk_proj_dim", type=int, default=16,
-        help=(
-            "Number of projection directions sampled at training time for the "
-            "masked-model NTK computation. Must be <= precompute_proj_dim. "
-            "Reduce if training-time memory is tight."
-        ),
-    )
-    parser.add_argument(
-        "--precompute_proj_dim", type=int, default=64,
-        help=(
-            "Number of projection directions stored during Jacobian precomputation. "
-            "A larger value gives a richer reference; at training time only "
-            "ntk_proj_dim of these are randomly sampled per step."
-        ),
-    )
+    # parser.add_argument(
+    #     "--ntk_proj_dim", type=int, default=16,
+    #     help=(
+    #         "Number of projection directions sampled at training time for the "
+    #         "masked-model NTK computation. Must be <= precompute_proj_dim. "
+    #         "Reduce if training-time memory is tight."
+    #     ),
+    # )
+    # parser.add_argument(
+    #     "--precompute_proj_dim", type=int, default=64,
+    #     help=(
+    #         "Number of projection directions stored during Jacobian precomputation. "
+    #         "A larger value gives a richer reference; at training time only "
+    #         "ntk_proj_dim of these are randomly sampled per step."
+    #     ),
+    # )
     args = parser.parse_args()
     main(args)

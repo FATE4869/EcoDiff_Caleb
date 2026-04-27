@@ -1,16 +1,18 @@
 data:
-  save_dir: datasets/flux/${logger.notes}
-  metadata: datasets/gcc3m/Validation_GCC-1.1.0-Validation.tsv
+  save_dir: /home/jovyan/projects/dataset/flux/${logger.notes}
+  metadata: /home/jovyan/projects/dataset/gcc3m/Validation_GCC-1.1.0-Validation.tsv
   size: 100
   batch_size: 1
+  ntk_proj_dim: 8         # projection dimension used at training time for K_masked
+  precompute_proj_dim: 16 # projection dimension used when precomputing K_orig Jacobians
 
 trainer:
   epochs: 4
-  beta: 0.01
+  beta: 0.1
   epsilon: 0.
   lr: 5e-1
-  attn_lr: 0.5
-  ff_lr: 0.1
+  attn_lr: 0.05
+  ff_lr: 1.0
   n_lr: 0.5
   model: flux # [sd1, sd2, sdxl, sd3, flux, dit]
   device: "cuda:0"
@@ -48,9 +50,9 @@ loss:
 logger:
   output_dir: "results"
   log_dir: "csv"
-  type: "wandb" # [wandb, csv]
+  type: "csv" # [wandb, csv]
   plot_interval: 10
-  project: "flux_debug"
+  project: "flux"
   notes: model_${trainer.model}_eps_${trainer.masking_eps}_sample_${data.size}_beta_${trainer.beta}_epochs_${trainer.epochs}_lr_${trainer.attn_lr}${trainer.ff_lr}${trainer.n_lr}_batch_size_${trainer.accumulate_grad_batches}_loss_${loss.reconstruct}${loss.reg}_regex_${trainer.regex}_masking_${trainer.masking}
   tags:
     - "large_blocks_lambda_only"
@@ -72,4 +74,6 @@ debug_cfg:
   data.size: 4
   logger.plot_interval: 4
   trainer.num_intervention_steps: 5
+  trainer.epochs: 4
   logger.type: "csv"
+  logger.project: "flux_debug"
