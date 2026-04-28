@@ -53,7 +53,7 @@ def main(args):
         pruning_module = original_pipe.transformer
     import pdb; pdb.set_trace()
     show_model_param_summary(pruning_module, modules_of_interest)
-    show_model_memory_consumption_summary(pruning_module, memory_usage_device, modules_of_interest)
+    # show_model_memory_consumption_summary(pruning_module, memory_usage_device, modules_of_interest)
 
     original_pipe.to(device)
     for prompt in prompts:
@@ -175,7 +175,7 @@ def main(args):
 
     network = pipe.unet if hasattr(pipe, "unet") else pipe.transformer
     show_model_param_summary(network, modules_of_interest)
-    show_model_memory_consumption_summary(network, memory_usage_device, modules_of_interest)
+    # show_model_memory_consumption_summary(network, memory_usage_device, modules_of_interest)
     pipe.to(device)
 
     # perform inference on pruned model
