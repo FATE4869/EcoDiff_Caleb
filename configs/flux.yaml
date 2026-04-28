@@ -1,13 +1,11 @@
 data:
-  save_dir: /home/jovyan/projects/dataset/flux/${logger.notes}
-  metadata: /home/jovyan/projects/dataset/gcc3m/Validation_GCC-1.1.0-Validation.tsv
+  save_dir: /gpfs/projects/shlneuroai/caleb/dataset/flux/${logger.notes}
+  metadata: /gpfs/projects/shlneuroai/caleb/dataset/gcc3m/Validation_GCC-1.1.0-Validation.tsv
   size: 100
   batch_size: 1
-  ntk_proj_dim: 8         # projection dimension used at training time for K_masked
-  precompute_proj_dim: 16 # projection dimension used when precomputing K_orig Jacobians
 
 trainer:
-  epochs: 4
+  epochs: 16
   beta: 0.1
   epsilon: 0.
   lr: 5e-1
@@ -38,7 +36,7 @@ lr_scheduler:
   decay_steps: 0
 
 loss:
-  reg: 1 # 2 for L2 norm, 1 for L1 norm, 0 for L0 norm
+  reg: 0 # 2 for L2 norm, 1 for L1 norm, 0 for L0 norm
   reconstruct: 2 # 2 for L2 norm, 1 for L1 norm
   use_attn_reg: true
   use_ffn_reg: true
@@ -69,7 +67,7 @@ accelerator:
   mixed_precision: False
   report_to: ${logger.type}
 
-debug: true
+debug: false
 debug_cfg:
   data.size: 4
   logger.plot_interval: 4
