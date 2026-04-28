@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=0 python scripts/train_ntk.py --save_dir results_ntk --cfg configs/flux_ntk.yaml --ntk_lambda 0.1
+CUDA_VISIBLE_DEVICES=0 python scripts/train_ntk.py --save_dir results_ntk --cfg configs/flux_ntk.yaml --ntk_lambda 1.0
