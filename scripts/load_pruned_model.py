@@ -51,7 +51,6 @@ def main(args):
         pruning_module = original_pipe.unet
     else:
         pruning_module = original_pipe.transformer
-    import pdb; pdb.set_trace()
     show_model_param_summary(pruning_module, modules_of_interest)
     # show_model_memory_consumption_summary(pruning_module, memory_usage_device, modules_of_interest)
 
@@ -196,7 +195,7 @@ def main(args):
         save_name = f"pruned_model_{'_'.join(f'{(1 - r) * 100:.0f}' for r in ratio)}.pkl"
 
         with open(os.path.join(dst, save_name), "wb") as f:
-            pruned_model = network
+            pruned_model = network.to("cpu")
             pickle.dump(pruned_model, f)
 
 if __name__ == "__main__":
