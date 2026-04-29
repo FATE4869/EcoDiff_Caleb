@@ -384,7 +384,14 @@ class SparsityLinear(torch.nn.Module):
         super(SparsityLinear, self).__init__()
         self.sparse_proj = torch.nn.Linear(in_features, num_lambda)
         self.out_features = out_features
-        self.lambda_to_keep = lambda_to_keep
+        # register as buffer so it moves with the module on .to(device)
+        self.register_buffer('lambda_to_keep', lambda_to_keep)
+
+    def __setstate__(self, state):
+        # Migrate old pickles where lambda_to_keep was a plain tensor attribute
+        super().__setstate__(state)
+        if 'lambda_to_keep' in self.__dict__ and 'lambda_to_keep' not in self._buffers:
+            self.register_buffer('lambda_to_keep', self.__dict__.pop('lambda_to_keep'))
 
     def forward(self, x):
         x = self.sparse_proj(x)
@@ -429,7 +436,8 @@ def hard_concrete_distribution(
 
 def l0_complexity_loss(alpha, beta: float = 0.83, eta: float = 1.1, gamma: float = -0.1, use_log: bool = False):
     offset = beta * math.log(-gamma / eta)
-    loss = torch.sigmoid(alpha - offset).sum()
+    # loss = torch.sigmoid(alpha - offset).sum() # original implementation
+    loss = torch.sigmoid(alpha - offset).mean() # caleb changed
     return loss
 
 
@@ -444,17 +452,22 @@ def calculate_reg_loss(
     reg_beta=1,  # beta for shifting the lambda toward positive value (avoid gradient vanishing)
 ):
     if p == 0:
+        # L0: count non-zero masks (optionally log-scaled) to encourage hard sparsity
         for lamb in lambs:
             loss_reg += l0_complexity_loss(lamb, use_log=use_log)
         loss_reg /= len(lambs)
     elif p == 1 or p == 2:
         for lamb in lambs:
             if reg:
+                # Squash lamb into (0,1); the +reg_beta shift biases sigmoid away from its
+                # flat tails so gradients remain healthy when lamb is near zero
                 lamb = torch.sigmoid(lamb * reg_alpha + reg_beta)
             if mean:
+                # Normalize by layer size so large layers don't dominate the loss
                 loss_reg += lamb.norm(p) / len(lamb)
             else:
                 loss_reg += lamb.norm(p)
+        # Average across layers so total loss is independent of network depth
         loss_reg /= len(lambs)
     else:
         raise NotImplementedError

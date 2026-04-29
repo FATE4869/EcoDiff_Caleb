@@ -37,6 +37,10 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.utils.checkpoint
+
+# cuDNN's graph-based MHA fails backward on pruned models with non-standard head dims;
+# disable only cudnn_sdp so Flash Attention 2 (flash_sdp) still runs on H200
+torch.backends.cuda.enable_cudnn_sdp(False)
 import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -53,6 +57,7 @@ from torchvision import transforms
 from torchvision.transforms.functional import crop
 from tqdm.auto import tqdm
 from transformers import CLIPTokenizer, PretrainedConfig, T5TokenizerFast
+from sdib.evaluation import show_model_memory_consumption_summary, show_model_param_summary
 
 import diffusers
 from diffusers import (
@@ -937,6 +942,9 @@ def main(args):
         transformer = FluxTransformer2DModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant
         )
+    modules_of_interest = ["attn", "ff", "conv", "norm", "proj_", "overall"]
+    if accelerator.is_main_process:
+        show_model_param_summary(transformer, modules_of_interest)
     ############## custom transformer ##############
 
     # We only train the additional adapter LoRA layers
