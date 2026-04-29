@@ -429,7 +429,10 @@ def hard_concrete_distribution(
 
 def l0_complexity_loss(alpha, beta: float = 0.83, eta: float = 1.1, gamma: float = -0.1, use_log: bool = False):
     offset = beta * math.log(-gamma / eta)
-    loss = torch.sigmoid(alpha - offset).sum()
+    loss = torch.sigmoid(alpha - offset).sum() # original implementation
+    # loss = torch.sigmoid(alpha - offset).mean() # caleb changed
+    if use_log:
+        loss = torch.log(loss)
     return loss
 
 
@@ -444,6 +447,7 @@ def calculate_reg_loss(
     reg_beta=1,  # beta for shifting the lambda toward positive value (avoid gradient vanishing)
 ):
     if p == 0:
+        use_log = True
         for lamb in lambs:
             loss_reg += l0_complexity_loss(lamb, use_log=use_log)
         loss_reg /= len(lambs)
