@@ -150,7 +150,11 @@ def main(args):
     if not hasattr(pipe, "unet"):
         norm_hook = hookers[2]
         for name in tqdm(norm_hook.hook_dict.keys(), desc="Pruning on Norm layer"):
-            module = pipe.transformer.get_submodule(name)
+            try:
+                module = pipe.transformer.get_submodule(name)
+            except AttributeError:
+                # parent attention layer was replaced with SkipConnection during attention pruning
+                continue
             lamb = norm_hook.lambs[norm_hook.lambs_module_names.index(name)]
             module = norm_layer_pruning(module, lamb)
             parent_module_name, child_name = name.rsplit(".", 1)

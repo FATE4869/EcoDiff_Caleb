@@ -28,6 +28,7 @@ def generate_configs(args):
         args.data_size,
     ):
         cfg = base_cfg
+        cfg.logger.output_dir = args.results_output_dir
         # if not args.train_task == "deconcept":
         cfg.data.size = ds
         # check default base config file for formating
@@ -50,8 +51,8 @@ def generate_configs(args):
             # lr with attn_lr and ffn_lr, avoid too long file name
             output_file = os.path.join(
                 args.output_dir,
-                f"lr_{alr}{flr}{nlr}_masking_{masking}_eps_{eps}_re_{re}_loss_reg_{loss_reg_norm}"
-                + f"_recon_{loss_recons_norm}_beta{beta}_ds_{ds}.yaml",
+                f"lr_{alr}_{flr}_{nlr}_eps_{eps}_loss_reg_{loss_reg_norm}"
+                + f"_recon_{loss_recons_norm}_beta_{beta}_masking_{masking}.yaml",
             )
         elif args.train_task == "debug":
             cfg.debug = args.debug
@@ -139,6 +140,13 @@ if __name__ == "__main__":
         default="configs/param_tuning_vram_runtime_no_checkpoint",
         help="Path to the output directory",
     )
+    parser.add_argument(
+        "--results_output_dir",
+        type=str,
+        default="results",
+        help="Path to the output experiment results",
+    )
+    
     parser.add_argument("--max_job", type=int, default=4, help="max running job at a time")
     parser.add_argument("--data_size", "-ds", type=int, nargs="+", default=[100])
     parser.add_argument("--attn_learning_rate", "-alr", type=float, nargs="+", default=LR)

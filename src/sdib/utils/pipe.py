@@ -43,12 +43,21 @@ def get_cfg(save_pt):
         cfg_dict[key] = value
 
     # correct hard_discrete
-    if cfg_dict["masking"] == "hard-discrete":
+    # check if masking is in cfg_dict to avoid in-place operation
+    if "masking" in cfg_dict:
+        if cfg_dict["masking"] == "hard-discrete":
+            cfg_dict["masking"] = "hard_discrete"
+    else:
         cfg_dict["masking"] = "hard_discrete"
-        
+
+
     if cfg_dict["model"] == "flux-dev":
         cfg_dict["model"] = "flux_dev"
-    cfg_dict["regex"] = cfg_dict["regex"].replace("-", "_")
+    # check if regex is in cfg_dict to avoid in-place operation
+    if "regex" in cfg_dict:
+        cfg_dict["regex"] = cfg_dict["regex"].replace("-", "_")
+    else:
+        cfg_dict["regex"] = ".*"
     return cfg_dict
 
 
@@ -146,7 +155,6 @@ def create_pipeline(
     if save_pt:
         if "ff.pt" in save_pt or "attn.pt" in save_pt:
             save_pts = get_save_pts(save_pt)
-
             # use one to get the config
             cfg_dict = get_cfg(save_pts["ff"])
             cross_attn_hooker = CrossAttentionExtractionHook(

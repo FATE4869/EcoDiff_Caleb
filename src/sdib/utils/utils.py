@@ -78,8 +78,10 @@ class SkipConnection(torch.nn.Module):
     def __init__(self):
         super(SkipConnection, self).__init__()
 
-    def forward(*args, **kwargs):
-        return args[1]
+    def forward(self, *args, **kwargs):
+        if args:
+            return args[0]
+        return next(iter(kwargs.values()))
 
 
 class AttentionSkipConnection(torch.nn.Module):

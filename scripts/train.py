@@ -393,14 +393,15 @@ def main(args):
                                 retain_graph=True,
                             )
                             # Manually accumulate dL/d_lambda across all timesteps.
-                            # Since we re-run each denoising step independently (no single
-                            # backward() call across the full chain), we sum the lambda
-                            # gradients from each timestep ourselves.
+                            # Scale by 1/accumulate_grad_batches to match the scaling that
+                            # accelerator.backward() applies to the regularization gradients,
+                            # so both terms contribute equally to the optimizer update.
+                            bptt_scale = 1.0 / cfg.trainer.accumulate_grad_batches
                             for lamb, lamb_grad in zip(trainable_lambs, lamb_grads):
                                 if lamb.grad is None:
-                                    lamb.grad = lamb_grad
+                                    lamb.grad = lamb_grad * bptt_scale
                                 else:
-                                    lamb.grad += lamb_grad
+                                    lamb.grad += lamb_grad * bptt_scale
                             # Compute dL/dz_t = dL/dz_{t-1} * dz_{t-1}/dz_t — the "backwards"
                             # gradient w.r.t. the input latent of this step. Unlike lamb_grads
                             # (which is the "sideways" gradient used to update λ), this is not

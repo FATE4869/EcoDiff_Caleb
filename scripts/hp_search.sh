@@ -10,23 +10,24 @@ python scripts/utils/hyperparameter_tuning.py \
     --output_dir "$TUNING_CFG_DIR" \
     --beta 0.1 0.01 \
     --ffn_learning_rate 1.0 0.1 \
-    --attn_learning_rate 0.5 \
+    --attn_learning_rate 0.5 0.05 \
     --n_learning_rate 0.5 \
-    --masking hard_discrete \
+    --masking sigmoid \
     --eps 0.1 \
     --regex ".*" \
-    --loss_reg 1 0 \
+    --loss_reg 2 1 0 \
     --loss_recons 2 \
     --data_size 100 \
     --num_intervention 5 \
     --device 0 \
     --project_name flux_hp \
     --prompts dummy \
-    --train_task general
+    --train_task general \
+    --results_output_dir results_flux_hp_search
 
-for cfg in "$TUNING_CFG_DIR"/*.yaml; do
-    echo "=== Running: $cfg ==="
-    CUDA_VISIBLE_DEVICES=0 python scripts/train.py \
-        --save_dir results_flux_schnell_hp_search \
-        --cfg "$cfg"
-done
+# for cfg in "$TUNING_CFG_DIR"/*.yaml; do
+#     echo "=== Running: $cfg ==="
+#     CUDA_VISIBLE_DEVICES=0 python scripts/train.py \
+#         --save_dir results_flux_schnell_hp_search \
+#         --cfg "$cfg"
+# done

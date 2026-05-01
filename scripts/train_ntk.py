@@ -735,11 +735,12 @@ def main(args):
                                 retain_graph=False,
                             )
                             lamb_grads = all_grads[:len(trainable_lambs)]
+                            bptt_scale = 1.0 / cfg.trainer.accumulate_grad_batches
                             for lamb, lamb_grad in zip(trainable_lambs, lamb_grads):
                                 if lamb.grad is None:
-                                    lamb.grad = lamb_grad
+                                    lamb.grad = lamb_grad * bptt_scale
                                 else:
-                                    lamb.grad += lamb_grad
+                                    lamb.grad += lamb_grad * bptt_scale
                             grad = all_grads[len(trainable_lambs)]
                             del all_grads, lamb_grads, latents
                         torch.cuda.empty_cache()
