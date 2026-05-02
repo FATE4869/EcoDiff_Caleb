@@ -77,18 +77,13 @@ def load_pipeline(model_str: str, torch_dtype: torch.dtype, disable_progress_bar
         )
     elif model_str == "sdxl":
         model_id = "stabilityai/stable-diffusion-xl-base-1.0"
-        pipe = SDXLDiffusionPipeline.from_pretrained(
-            model_id,
-            torch_dtype=torch_dtype,
-            use_safetensors=True,
-        )
+        pipe = SDXLDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch_dtype, use_safetensors=True, cache_dir=hf_cache_dir)
     elif model_str == "sd3":
         pipe = SDIBDiffusion3Pipeline.from_pretrained("stabilityai/stable-diffusion-3.5-large", torch_dtype=torch_dtype)
     elif model_str == "dit":
         pipe = DiTIBPipeline.from_pretrained("facebook/DiT-XL-2-256", torch_dtype=torch_dtype)
         pipe.scheduler = ReverseDPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
     elif model_str == "flux":
-        hf_cache_dir = os.getenv("HF_CACHE_DIR")
         pipe = FluxIBPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", torch_dtype=torch_dtype, cache_dir=hf_cache_dir)
     elif model_str == "flux_dev":
         pipe = FluxIBPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", torch_dtype=torch_dtype, cache_dir=hf_cache_dir)
