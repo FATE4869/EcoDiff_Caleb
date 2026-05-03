@@ -52,7 +52,7 @@ logger:
   type: "csv" # [wandb, csv]
   plot_interval: 10
   project: "sdxl"
-  notes: model_${trainer.model}_eps_${trainer.masking_eps}_sample_${data.size}_beta_${trainer.beta}_epochs_${trainer.epochs}_lr_${trainer.attn_lr}_${trainer.ff_lr}_batch_size_${data.effective_batch_size}_loss_${loss.reconstruct}_${loss.reg}_masking_${trainer.masking}
+  notes: model_${trainer.model}_eps_${trainer.masking_eps}_sample_${data.size}_beta_${trainer.beta}_epochs_${trainer.epochs}_lr_${trainer.attn_lr}_${trainer.ff_lr}_batch_size_${data.effective_batch_size}_loss_${loss.reconstruct}_${loss.reg}_masking_${trainer.masking}_seed_${trainer.seed}
   tags:
     - "large_blocks_lambda_only"
     - "beta_${trainer.beta}"

@@ -179,7 +179,8 @@ def main(args):
         except Exception as e:
             logger.info(f"Error: {e}, setting batch size to 1")
             batch_size = 1
-    dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                            generator=torch.Generator().manual_seed(seed))
 
     # save the original image
     if cfg.logger.type == "wandb":
@@ -396,8 +397,8 @@ def main(args):
                             # Scale by 1/accumulate_grad_batches to match the scaling that
                             # accelerator.backward() applies to the regularization gradients,
                             # so both terms contribute equally to the optimizer update.
-                            bptt_scale = 1.0 / cfg.trainer.accumulate_grad_batches
-                            # bptt_scale = 1.0
+                            # bptt_scale = 1.0 / cfg.trainer.accumulate_grad_batches
+                            bptt_scale = 1.0
                             for lamb, lamb_grad in zip(trainable_lambs, lamb_grads):
                                 if lamb.grad is None:
                                     lamb.grad = lamb_grad * bptt_scale
@@ -548,7 +549,8 @@ def main(args):
                         norm_remain_head, norm_total_head, norm_sparsity = 0, 0, 0
 
                     logger.info(
-                        f"mask sparsity for threshold {masking_threshold}: "
+                        f"\n"
+                        f"cross_attn_mask sparsity for threshold {masking_threshold}: "
                         f"{remain_head}/{total_head}, {sparsity:.2%} \n"
                         f"ff_mask sparsity for threshold {masking_threshold}: "
                         f"{ff_remain_head}/{ff_total_head}, {ff_sparsity:.2%} \n"

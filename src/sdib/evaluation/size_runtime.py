@@ -47,12 +47,12 @@ def show_model_param_summary(model, modules_of_interest: List[str], verbose=Fals
         for module_name in modules_of_interest:
             if module_name in name:
                 if verbose:
-                    print(f"# of parameters for {name}: {val / 1000}k")
+                    print(f"# of parameters for {name}: {val / 1e6}M")
                 summary_dict[module_name] += val
     print("############ Summary: ############")
     for module_name, val in summary_dict.items():
         percentage = (val / params_dict["overall"]) * 100
-        print(f"Overall parameters for all {module_name}: {val / 1000}k ({percentage:.3f}%)")
+        print(f"Overall parameters for all {module_name}: {val / 1e6}M ({percentage:.3f}%)")
 
 
 def show_model_memory_consumption_summary(model, device, modules_of_interest: List[str], verbose=False):
