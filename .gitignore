@@ -176,6 +176,7 @@ cython_debug/
 # EcoDiff ignore file
 datasets/
 results/
+results_sdxl/
 results_ntk/
 results_output_kernel/
 slurm_logs/
