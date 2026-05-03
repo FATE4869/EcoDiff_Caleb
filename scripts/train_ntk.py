@@ -155,10 +155,9 @@ def precompute_original_jacobians(
     if transformer is not None and hasattr(transformer, 'enable_gradient_checkpointing'):
         transformer.enable_gradient_checkpointing()
         gc_enabled = True
-
     # Binary masking with mask=sigmoid(λ_init) leaves: same operating point as
     # training, so K_orig ≈ K_eff at t=0 and the loss grows only as λ diverges.
-    with detached_mask_context(hookers) as ref_params:
+    with detached_mask_context(hookers) as ref_params: # Jacobian targets are the detached sigmoid(λ) tensors.
         for sample_idx in tqdm.tqdm(range(len(dataset)), desc="Precomputing Jacobians"):
             save_path = os.path.join(save_dir, f"jacobian_{sample_idx}.pt")
             if os.path.exists(save_path):
@@ -184,11 +183,11 @@ def precompute_original_jacobians(
             ):
                 # Grad enabled so autograd.grad can trace through the forward pass.
                 with torch.set_grad_enabled(True):
-                    out_latents = pipe.inference_with_grad_denoising_step(step_idx, t, prep)
+                    out_latents = pipe.inference_with_grad_denoising_step(step_idx, t, prep) # shape [1, C, H, W]
 
-                D = out_latents.reshape(1, -1).shape[1]
+                D = out_latents.reshape(1, -1).shape[1] # flattened output dimension
                 gen = torch.Generator().manual_seed(step_idx)
-                proj = F.normalize(torch.randn(D, proj_dim, generator=gen), dim=0).to(device)
+                proj = F.normalize(torch.randn(D, proj_dim, generator=gen), dim=0).to(device) # [D, proj_dim]
                 out_flat = out_latents.reshape(1, -1).float()
                 projected = out_flat @ proj  # [1, proj_dim]
 
@@ -287,7 +286,7 @@ def pruning_loss(
     norm_loss_reg = torch.tensor(0.0, device=device, dtype=torch_dtype)
     if norm_hooker:
         norm_loss_reg = calculate_reg_loss(
-            ff_loss_reg,
+            norm_loss_reg,
             norm_hooker.lambs,
             cfg.loss.reg,
             mean=cfg.loss.mean,
@@ -417,7 +416,8 @@ def main(args):
         except Exception as e:
             logger.info(f"Error: {e}, setting batch size to 1")
             batch_size = 1
-    dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                            generator=torch.Generator().manual_seed(seed))
 
     if cfg.logger.type == "wandb":
         img = save_image_seed(pipe, validation_prompts, cfg.trainer.num_intervention_steps, device, seed, save_dir=None)
@@ -559,8 +559,10 @@ def main(args):
 
     _norm_hooker = norm_hooker  # shorthand used below
 
-    total_step = cfg.trainer.epochs * len(dataloader)
-    with tqdm.tqdm(total=total_step) as pbar:
+    total_steps = cfg.trainer.epochs * len(dataloader)
+    total_updates = total_steps // cfg.trainer.accumulate_grad_batches
+    global_step = 0
+    with tqdm.tqdm(total=total_updates, desc="param updates") as pbar:
         for i in range(cfg.trainer.epochs):
             for idx, data in enumerate(dataloader):
                 image_pt = data["image"]
@@ -735,7 +737,7 @@ def main(args):
                                 retain_graph=False,
                             )
                             lamb_grads = all_grads[:len(trainable_lambs)]
-                            bptt_scale = 1.0 / cfg.trainer.accumulate_grad_batches
+                            bptt_scale = 1.0
                             for lamb, lamb_grad in zip(trainable_lambs, lamb_grads):
                                 if lamb.grad is None:
                                     lamb.grad = lamb_grad * bptt_scale
@@ -868,12 +870,15 @@ def main(args):
                     # NTK loss already backpropagated per step inside ntk_masking_context
                     accelerator.backward(loss)
 
-                if idx % cfg.trainer.accumulate_grad_batches == 0:
+                if (idx + 1) % cfg.trainer.accumulate_grad_batches == 0:
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
+                    global_step += 1
+                pbar.set_postfix(epoch=f"{i+1}/{cfg.trainer.epochs}", idx=idx, step=f"{global_step}/{total_updates}")
+                pbar.update()
 
-                if idx % cfg.logger.plot_interval == 0:
+                if global_step % cfg.logger.plot_interval == 0 and global_step > 0:
                     if cfg.logger.type == "wandb":
                         wandb.log(
                             {
@@ -918,8 +923,8 @@ def main(args):
                         )
                     else:
                         path = os.path.join(args.save_dir, cfg.logger.project, cfg.logger.notes, "images")
-                        val_path = os.path.join(path, "validation", f"epoch_{i}_step_{idx}")
-                        train_path = os.path.join(path, "train", f"epoch_{i}_step_{idx}")
+                        val_path = os.path.join(path, "validation", f"epoch_{i}_step_{global_step}")
+                        train_path = os.path.join(path, "train", f"epoch_{i}_step_{global_step}")
                         for save_path, prompts in zip(
                             [val_path, train_path], [validation_prompts, train_dataset[0]["prompt"]]
                         ):
@@ -982,12 +987,11 @@ def main(args):
                         f"loss_ntk: {loss_ntk}, total_loss: {loss}"
                     )
 
-                    cross_attn_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{idx}_attn.pt"))
-                    ff_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{idx}_ff.pt"))
+                    cross_attn_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_attn.pt"))
+                    ff_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_ff.pt"))
                     if cfg.trainer.n_lr != 0:
-                        norm_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{idx}_norm.pt"))
-                    logger.info(f"epoch: {i}, step: {idx}: saving lambda")
-                pbar.update()
+                        norm_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_norm.pt"))
+                    logger.info(f"epoch: {i}, step: {global_step}: saving lambda")
 
         logger.info(f"epoch {i+1}/{cfg.trainer.epochs}")
 
