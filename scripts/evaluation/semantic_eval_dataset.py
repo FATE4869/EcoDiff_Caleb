@@ -21,11 +21,13 @@ from sdib.data.eval_dataset import EvalDataset
 
 
 def load_model(args, torch_dtype, device):
+
     if args.save_pth is not None:
         pipe = create_pipeline(
             args.model, device, torch_dtype,
             save_pt=args.save_pth, lambda_threshold=args.lambda_threshold
         )
+        print(f"Loaded pruned model from {args.save_pth} with lambda_threshold={args.lambda_threshold}")
     else:
         pipe = load_pipeline(args.model, torch_dtype, disable_progress_bar=True)
         if args.pruned_model_pt is not None:
@@ -34,7 +36,6 @@ def load_model(args, torch_dtype, device):
                     if module == "torch.storage" and name == "_load_from_bytes":
                         return lambda b: torch.load(io.BytesIO(b), map_location="cpu", weights_only=False)
                     return super().find_class(module, name)
-            # import pdb; pdb.set_trace()
             with open(args.pruned_model_pt, "rb") as f:
                 model = pickle.load(f)
                 # model = CpuUnpickler(f).load()
@@ -48,6 +49,9 @@ def load_model(args, torch_dtype, device):
                 del pipe.transformer
                 pipe.transformer = model
             gc.collect()
+            print(f"Loaded pruned model from {args.pruned_model_pt}")
+        else:
+            print(f"Loaded original model {args.model} without pruning")
     pipe.to(device)
     return pipe
 
@@ -85,7 +89,10 @@ def semantic_eval(args):
     else:
         pipe = load_model(args, torch_dtype, device)
         if distributed_state.is_main_process:
-            total_params = sum(p.numel() for p in pipe.transformer.parameters())
+            if hasattr(pipe, "unet"):
+                total_params = sum(p.numel() for p in pipe.unet.parameters())
+            else:
+                total_params = sum(p.numel() for p in pipe.transformer.parameters())
             # total_params = get_total_params(pipe.unet if hasattr(pipe, "unet") else pipe.transformer)
             print(f"Model has {total_params/1e9:.2f}B parameters")
             print("Generating synthetic images with the model...")
