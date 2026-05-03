@@ -1,31 +1,34 @@
 data:
-  save_dir: ${oc.env:DATASET_DIR}/flux/${logger.notes}
+  save_dir: ${oc.env:DATASET_DIR}/sdxl_ntk/${logger.notes}_log
   metadata: ${oc.env:DATASET_DIR}/gcc3m/Validation_GCC-1.1.0-Validation.tsv
   size: 100
-  batch_size: 1
+  batch_size: 4
+  effective_batch_size: 4
+  precompute_proj_dim: 16
+  ntk_proj_dim: 8
 
 trainer:
   epochs: 4
-  beta: 0.1
+  beta: 0.5
   epsilon: 0.
   lr: 5e-1
-  attn_lr: 0.5
-  ff_lr: 0.1
-  n_lr: 0.5
-  model: flux # [sd1, sd2, sdxl, sd3, flux, dit]
+  attn_lr: 0.15
+  ff_lr: 0.15
+  n_lr: 0
+  model: sdxl # [sd1, sd2, sdxl, sd3]
   device: "cuda:0"
-  num_intervention_steps: 5
-  seed: 48
-  init_lambda: 5 # page 17 in the paper
+  num_intervention_steps: 50
+  seed: 123
+  init_lambda: 5
   regex: ".*" # "^(down_blocks.[1,2]).*" # optional are ^(down_blocks).*, ^(up_blocks).*, .* (for all heads)
   attn_name: attn # use to filter the attention heads, e.g. attn2 only for cross attention
   head_num_filter: 1 # number of heads to filter, apply lambda to the layter that has more than head_num_filter heads
   masking: "sigmoid" # [sigmoid, hard_discrete]
-  masking_eps: 0.1
+  masking_eps: 0.5
   use_log: false
   precision: 'bf16' # [fp16, bf16]
   disable_progress_bar: true
-  accumulate_grad_batches: 4 # batch size
+  accumulate_grad_batches: 1 # batch size
   grad_checkpointing: true # prefered for large models or large num_intervention_steps
 
 lr_scheduler:
@@ -36,42 +39,42 @@ lr_scheduler:
   decay_steps: 0
 
 loss:
-  reg: 0 # 2 for L2 norm, 1 for L1 norm, 0 for L0 norm (paper uses L0)
-  reconstruct: 2 # 2 for L2 norm, 1 for L1 norm
+  reg: 1 # 2 for L2 norm, 1 for L1 norm, 0 for L0 norm
+  reconstruct: 1 # 2 for L2 norm, 1 for L1 norm
   use_attn_reg: true
   use_ffn_reg: true
   mean: true
-  lambda_reg: True
+  lambda_reg: false 
   reg_alpha: 0.4
   reg_beta: 1
 
 logger:
-  output_dir: "results"
+  output_dir: "results_sdxl_ntk"
   log_dir: "csv"
   type: "csv" # [wandb, csv]
   plot_interval: 10
-  project: "flux"
-  notes: model_${trainer.model}_eps_${trainer.masking_eps}_sample_${data.size}_beta_${trainer.beta}_epochs_${trainer.epochs}_lr_${trainer.attn_lr}_${trainer.ff_lr}_${trainer.n_lr}_batch_size_${trainer.accumulate_grad_batches}_loss_${loss.reconstruct}_${loss.reg}_masking_${trainer.masking}
+  project: "sdxl_ntk"
+  notes: model_${trainer.model}_eps_${trainer.masking_eps}_sample_${data.size}_beta_${trainer.beta}_epochs_${trainer.epochs}_lr_${trainer.attn_lr}_${trainer.ff_lr}_batch_size_${data.effective_batch_size}_loss_${loss.reconstruct}_${loss.reg}_masking_${trainer.masking}_seed_${trainer.seed}
   tags:
     - "large_blocks_lambda_only"
     - "beta_${trainer.beta}"
     - "recon_norm_${loss.reconstruct}"
     - "reg_norm_${loss.reg}"
   save_lambda_path:
-    attn: ${logger.output_dir}/${logger.project}/${logger.notes}/latest_lambda.pt
-    ffn: ${logger.save_lambda_path.attn}
-    norm: ${logger.save_lambda_path.attn}
+    ffn: "${logger.output_dir}/${logger.project}/${logger.notes}/latest_lambda.pt"
+    attn: "${logger.output_dir}/${logger.project}/${logger.notes}/latest_lambda.pt"
 
 accelerator:
   gradient_accumulation_steps: 1
   mixed_precision: False
   report_to: ${logger.type}
 
-debug: false
+debug: true
 debug_cfg:
-  data.size: 4
-  logger.plot_interval: 4
-  trainer.num_intervention_steps: 5
-  trainer.epochs: 4
+  data.size: 8
+  logger.plot_interval: 5
+  trainer.num_intervention_steps: 10
   logger.type: "csv"
-  logger.project: "flux_debug"
+  logger.project: "sdxl_debug"
+  data.precompute_proj_dim: 6
+  data.ntk_proj_dim: 4
