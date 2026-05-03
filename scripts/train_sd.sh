@@ -1,17 +1,18 @@
-CUDA_VISIBLE_DEVICES=0 python scripts/load_pruned_model.py --model flux \
---num_intervention_steps 4 --dst ../pruned/pruned_10 \
---scope "global" --ratio 0.9 --save_pruned_model \
---save_pt results/flux/model_flux_eps_0.1_sample_100_beta_0.1_epochs_16_lr_0.051.00.5_batch_size_4_loss_21_regex_.\*_masking_hard_discrete/lambda/epoch_15_step_400_attn.pt
+#!/bin/bash
+#SBATCH --job-name=train_sdxl_loss_2_2_with_bptt_scale
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:h200:1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64GB
+#SBATCH --account=stf                                                                                                             
+#SBATCH --output=slurm_logs/%x_%j.out
+#SBATCH --error=slurm_logs/%x_%j.err
+#SBATCH --time=00-5:00:00
+#SBATCH --signal=SIGUSR1@90
 
+# Activate your conda
+source $(conda info --base)/etc/profile.d/conda.sh                                                                                                                                                   
+conda activate /gpfs/projects/shlneuroai/caleb/miniconda3/envs/sdib
 
-# accelerate launch --num_processes 1 --main_process_port 29501 scripts/evaluation/semantic_eval_dataset.py \
-# --save_dir results/generated_images_flux_schnell_4steps_pruned_10_epochs_16/ \
-# --num_intervention_steps 4 --model flux --dataset_name flickr --max_size 100 --image_size 512 \
-# --pruned_model_pt /gpfs/projects/shlneuroai/caleb/projects/EcoDiff_Caleb/results/flux/model_flux_eps_0.1_sample_100_beta_0.1_epochs_16_lr_0.051.00.5_batch_size_4_loss_21_regex_.*_masking_hard_discrete/lambda/results/flux_demo_pruned_20_16_epochs/pruned_model_10.pkl
-
-CUDA_VISIBLE_DEVICES=0 python scripts/train.py --save_dir results_sd --cfg configs/sdxl.yaml
-
-# CUDA_VISIBLE_DEVICES=0 python scripts/get_retrained_model.py --model flux --num_intervention_steps 4 \
-# --dst results/retrained/retrained_20 --full_lora \
-# --pruned_model_pt results/flux/model_flux_eps_0.1_sample_100_beta_0.1_epochs_16_lr_0.051.00.5_batch_size_4_loss_21_regex_.*_masking_hard_discrete/pruned/flux_demo_pruned_20_16_epochs/pruned_model_20.pkl \
-# --lora_pt results/flux/model_flux_eps_0.1_sample_100_beta_0.1_epochs_16_lr_0.051.00.5_batch_size_4_loss_21_regex_.*_masking_hard_discrete/pruned/flux_demo_pruned_20_16_epochs/retrain_results/flux_lora/checkpoint-4000
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --save_dir results_sdxl --cfg configs/sdxl22.yaml

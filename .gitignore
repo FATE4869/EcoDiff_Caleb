@@ -176,6 +176,12 @@ cython_debug/
 # EcoDiff ignore file
 datasets/
 results/
+results_sd/
+results_sdxl/
+results_flux_dev/
+results_flux_hp_search/
+results_flux_dev_sigmoid_no_bptt_scale/
+results_flux_dev_hard_discrete_no_bptt_scale/
 results_ntk/
 results_output_kernel/
 slurm_logs/

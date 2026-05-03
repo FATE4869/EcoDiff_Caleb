@@ -299,7 +299,7 @@ def main(args):
     total_steps = cfg.trainer.epochs * len(dataloader)
     total_updates = total_steps // cfg.trainer.accumulate_grad_batches
     global_step = 0
-    with tqdm.tqdm(total=total_steps, desc="param updates") as pbar:
+    with tqdm.tqdm(total=total_updates, desc="param updates") as pbar:
         for i in range(cfg.trainer.epochs):
             for idx, data in enumerate(dataloader):
                 image_pt = data["image"]
@@ -397,6 +397,7 @@ def main(args):
                             # accelerator.backward() applies to the regularization gradients,
                             # so both terms contribute equally to the optimizer update.
                             bptt_scale = 1.0 / cfg.trainer.accumulate_grad_batches
+                            # bptt_scale = 1.0
                             for lamb, lamb_grad in zip(trainable_lambs, lamb_grads):
                                 if lamb.grad is None:
                                     lamb.grad = lamb_grad * bptt_scale

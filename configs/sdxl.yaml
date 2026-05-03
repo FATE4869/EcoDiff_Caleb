@@ -38,7 +38,7 @@ lr_scheduler:
 
 loss:
   reg: 1 # 2 for L2 norm, 1 for L1 norm, 0 for L0 norm
-  reconstruct: 2 # 2 for L2 norm, 1 for L1 norm
+  reconstruct: 1 # 2 for L2 norm, 1 for L1 norm
   use_attn_reg: true
   use_ffn_reg: true
   mean: true
@@ -47,20 +47,20 @@ loss:
   reg_beta: 1
 
 logger:
-  output_dir: "results"
+  output_dir: "results_sdxl"
   log_dir: "csv"
   type: "csv" # [wandb, csv]
   plot_interval: 10
   project: "sdxl"
-  notes: model_${trainer.model}_eps_${trainer.masking_eps}_sample_${data.size}_beta_${trainer.beta}_epochs_${trainer.epochs}_lr_${trainer.attn_lr}_${trainer.ff_lr}_batch_size_${data.effective_batch_size}_loss_${loss.reconstruct}_${loss.reg}_regex_${trainer.regex}_masking_${trainer.masking}
+  notes: model_${trainer.model}_eps_${trainer.masking_eps}_sample_${data.size}_beta_${trainer.beta}_epochs_${trainer.epochs}_lr_${trainer.attn_lr}_${trainer.ff_lr}_batch_size_${data.effective_batch_size}_loss_${loss.reconstruct}_${loss.reg}_masking_${trainer.masking}
   tags:
     - "large_blocks_lambda_only"
     - "beta_${trainer.beta}"
     - "recon_norm_${loss.reconstruct}"
     - "reg_norm_${loss.reg}"
   save_lambda_path:
-    ffn: "results/${logger.project}/${logger.notes}/latest_lambda.pt"
-    attn: "results/${logger.project}/${logger.notes}/latest_lambda.pt"
+    ffn: "${logger.output_dir}/${logger.project}/${logger.notes}/latest_lambda.pt"
+    attn: "${logger.output_dir}/${logger.project}/${logger.notes}/latest_lambda.pt"
 
 accelerator:
   gradient_accumulation_steps: 1
