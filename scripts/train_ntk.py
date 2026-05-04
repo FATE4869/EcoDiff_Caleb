@@ -309,9 +309,9 @@ def pruning_loss(
 
     if logger:
         log_output = (
-            f"ff_loss_reg: {ff_loss_reg.item()}"
-            f" attn_loss_reg: {attn_loss_reg.item()}"
-            f" loss_ntk: {loss_ntk.item()}"
+            f"ff_loss_reg: {ff_loss_reg.item():.4f}"
+            f" attn_loss_reg: {attn_loss_reg.item():.4f}"
+            f" loss_ntk: {loss_ntk.item():.6f}"
         )
         if norm_hooker:
             log_output += f" norm_loss_reg: {norm_loss_reg.item()}"
@@ -706,9 +706,9 @@ def main(args):
                         )
                         # NTK loss already backpropagated per step inside ntk_masking_context
                         logger.info(
-                            f"loss_reconstruct: {loss_reconstruct.item()}"
-                            f" loss_reg: {loss_reg.item()}"
-                            f" loss_ntk: {loss_ntk.item()}"
+                            f"loss_reconstruct: {loss_reconstruct.item():.4f}"
+                            f" loss_reg: {loss_reg.item():.4f}"
+                            f" loss_ntk: {loss_ntk.item():.6f}"
                         )
                         accelerator.backward(loss)
                         grad = latents.grad.detach()
@@ -950,19 +950,19 @@ def main(args):
                                 save_dir=os.path.join(save_path, "discrete mask"),
                             )
                             torch.cuda.empty_cache()
-
-                    for n, lamb in zip(lamda_block_names, cross_attn_hooker.lambs):
-                        logger.info(f"lambda in {n}: {lamb.clamp(min=0).tolist()}")
-                    for n, lamb in zip(ff_lambda_block_names, ff_hooker.lambs):
-                        logger.info(
-                            f"lambda {n}: max {lamb.max().item()}, min {lamb.min().item()}, mean {lamb.mean().item()}"
-                        )
-                    if cfg.trainer.n_lr != 0:
-                        for n, lamb in zip(norm_lambda_block_names, norm_hooker.lambs):
+                    if args.verbose:
+                        for n, lamb in zip(lamda_block_names, cross_attn_hooker.lambs):
+                            logger.info(f"lambda in {n}: {lamb.clamp(min=0).tolist()}")
+                        for n, lamb in zip(ff_lambda_block_names, ff_hooker.lambs):
                             logger.info(
-                                f"lambda {n}: max {lamb.max().item()}, "
-                                + f"min {lamb.min().item()}, mean {lamb.mean().item()}"
+                                f"lambda {n}: max {lamb.max().item()}, min {lamb.min().item()}, mean {lamb.mean().item()}"
                             )
+                        if cfg.trainer.n_lr != 0:
+                            for n, lamb in zip(norm_lambda_block_names, norm_hooker.lambs):
+                                logger.info(
+                                    f"lambda {n}: max {lamb.max().item()}, "
+                                    + f"min {lamb.min().item()}, mean {lamb.mean().item()}"
+                                )
 
                     masking_threshold = 0
                     remain_head, total_head, sparsity = calculate_mask_sparsity(cross_attn_hooker, masking_threshold)
@@ -983,8 +983,8 @@ def main(args):
                         f"{norm_remain_head}/{norm_total_head}, {norm_sparsity:.2%} \n"
                     )
                     logger.info(
-                        f"loss_reconstruct: {loss_reconstruct}, loss_reg: {loss_reg}, "
-                        f"loss_ntk: {loss_ntk}, total_loss: {loss}"
+                        f"loss_reconstruct: {loss_reconstruct:.4f}, loss_reg: {loss_reg:.4f}, "
+                        f"loss_ntk: {loss_ntk:.6f}, total_loss: {loss:.4f}"
                     )
 
                     cross_attn_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_attn.pt"))

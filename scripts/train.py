@@ -557,7 +557,7 @@ def main(args):
                         f"norm_mask sparsity for threshold {masking_threshold}: "
                         f"{norm_remain_head}/{norm_total_head}, {norm_sparsity:.2%} \n"
                     )
-                    logger.info(f"loss_reconstruct: {loss_reconstruct}, loss_reg: {loss_reg}, total_loss: {loss}")
+                    logger.info(f"loss_reconstruct: {loss_reconstruct:.4f}, loss_reg: {loss_reg:.4f}, total_loss: {loss:.4f}")
 
                     cross_attn_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_attn.pt"))
                     ff_hooker.save(os.path.join("lambda", f"epoch_{i}_step_{global_step}_ff.pt"))
