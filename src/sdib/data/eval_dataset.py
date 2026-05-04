@@ -8,6 +8,7 @@ import gdown
 import pandas as pd
 import webdataset as wds
 from PIL import Image
+from tqdm import tqdm
 
 DATASET = {
     "laion": "https://drive.google.com/drive/folders/1pv_5ER2zeqooOjmUW3f0S7WTwzH0G7dt?usp=share_link",
@@ -85,12 +86,15 @@ class EvalDataset:
             captions = captions.drop_duplicates(subset="image", keep="first")
 
             print("Number of images before filtering:", len(captions))
-
+            num_images_to_process = 15000 # you can change this number so that # images after filtering is greater than self.max_size
+            captions = captions.iloc[:num_images_to_process]
+            print(f"Only the first: {num_images_to_process} images are processed to save time.")
             captions["image"] = captions["image"].apply(lambda x: f"{data_dir}/train2017/{x}")
             # remove the image with false image size
             # remove the image with size can not be divided by 8, for SDXL model
-            captions["image_size"] = captions["image"].apply(lambda x: Image.open(x).size)
-            captions["compatible_size"] = captions["image_size"].apply(lambda x: x[0] % 8 == 0 and x[1] % 8 == 0)
+            tqdm.pandas(desc="Loading image sizes")
+            captions["image_size"] = captions["image"].progress_apply(lambda x: Image.open(x).size)
+            captions["compatible_size"] = captions["image_size"].progress_apply(lambda x: x[0] % 8 == 0 and x[1] % 8 == 0)
             captions = captions[captions["compatible_size"]]
             print("Number of images after filtering:", len(captions))
             self.captions = captions.iloc[: self.max_size]
