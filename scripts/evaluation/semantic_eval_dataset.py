@@ -83,6 +83,7 @@ def semantic_eval(args):
         len(os.listdir(real_dir)) >= n_expected
         and len(os.listdir(gen_dir)) >= n_expected
     )
+    # images_exist = True
     if images_exist:
         if distributed_state.is_main_process:
             print(f"Found {n_expected} existing images in {args.save_dir}, skipping generation.")
@@ -123,9 +124,10 @@ def semantic_eval(args):
         print("Computing FID...")
         fid = FrechetInceptionDistance(feature=2048)
         original_list, gen_list = [], []
-        for idx in tqdm(range(len(eval_ds))):
-            real_pil = Image.open(os.path.join(real_dir, f"{idx:05d}.png")).convert("RGB")
-            gen_pil = Image.open(os.path.join(gen_dir, f"{idx:05d}.png")).convert("RGB")
+        for image_name in tqdm(os.listdir(real_dir)):
+        # for idx in tqdm(range(len(eval_ds))):
+            real_pil = Image.open(os.path.join(real_dir, image_name)).convert("RGB")
+            gen_pil = Image.open(os.path.join(gen_dir, image_name)).convert("RGB")
 
             real_t = (TF.to_tensor(real_pil).unsqueeze(0) * 255).to(torch.uint8)
             gen_t = (TF.to_tensor(gen_pil).unsqueeze(0) * 255).to(torch.uint8)
