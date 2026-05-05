@@ -327,6 +327,8 @@ def pruning_loss(
 def main(args):
     cfg = load_config(args.cfg)
     args.ntk_proj_dim = cfg.data.ntk_proj_dim
+    args.ntk_lambda = cfg.trainer.ntk_beta
+
     args.precompute_proj_dim = cfg.data.precompute_proj_dim
     device = torch.device(cfg.trainer.device)
     with open(args.validation_prompts_path, "r") as f:
@@ -975,7 +977,7 @@ def main(args):
                         norm_remain_head, norm_total_head, norm_sparsity = 0, 0, 0
 
                     logger.info(
-                        f"mask sparsity for threshold {masking_threshold}: "
+                        f"\ncross_attn_ mask sparsity for threshold {masking_threshold}: "
                         f"{remain_head}/{total_head}, {sparsity:.2%} \n"
                         f"ff_mask sparsity for threshold {masking_threshold}: "
                         f"{ff_remain_head}/{ff_total_head}, {ff_sparsity:.2%} \n"
@@ -1045,14 +1047,6 @@ if __name__ == "__main__":
     parser.add_argument("--islaunch", action="store_true")
     parser.add_argument("--task", "-t", type=str, default="general")
     parser.add_argument("--load_lambda", "-l", action="store_true")
-    # parser.add_argument(
-    #     "--jacobian_dir", type=str, default=None,
-    #     help="Directory for precomputed Jacobians. Defaults to <save_dir>/jacobians.",
-    # )
-    parser.add_argument(
-        "--ntk_lambda", type=float, default=0.1,
-        help="Weight for the NTK alignment loss term (0 = disabled).",
-    )
     parser.add_argument(
         "--verbose", action="store_true",
         help="Log per-step K_orig / K_eff matrices and NTK loss.",
